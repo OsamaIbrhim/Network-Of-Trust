@@ -1,0 +1,891 @@
+[
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "_identityContract",
+        "type": "address"
+      },
+      {
+        "internalType": "address",
+        "name": "_academicContract",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "nonpayable",
+    "type": "constructor"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "student",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "enum GraduationManager.GraduationStatus",
+        "name": "previousStatus",
+        "type": "uint8"
+      },
+      {
+        "indexed": false,
+        "internalType": "enum GraduationManager.GraduationStatus",
+        "name": "newStatus",
+        "type": "uint8"
+      },
+      {
+        "indexed": false,
+        "internalType": "string",
+        "name": "reason",
+        "type": "string"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "timestamp",
+        "type": "uint256"
+      }
+    ],
+    "name": "AdminEmergencyStatusSet",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "student",
+        "type": "address"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "institution",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "bytes32",
+        "name": "department",
+        "type": "bytes32"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "eligibilityExpiry",
+        "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "totalCredits",
+        "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "gpa",
+        "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "timestamp",
+        "type": "uint256"
+      }
+    ],
+    "name": "EligibilityAchieved",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "student",
+        "type": "address"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "institution",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "bytes32",
+        "name": "department",
+        "type": "bytes32"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "approvalDate",
+        "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "timestamp",
+        "type": "uint256"
+      }
+    ],
+    "name": "GraduationApproved",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "previousOwner",
+        "type": "address"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "newOwner",
+        "type": "address"
+      }
+    ],
+    "name": "OwnershipTransferred",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": false,
+        "internalType": "address",
+        "name": "account",
+        "type": "address"
+      }
+    ],
+    "name": "Paused",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "institution",
+        "type": "address"
+      },
+      {
+        "indexed": true,
+        "internalType": "bytes32",
+        "name": "department",
+        "type": "bytes32"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "minimumCredits",
+        "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "minimumGpa",
+        "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "timestamp",
+        "type": "uint256"
+      }
+    ],
+    "name": "RequirementsConfigured",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "student",
+        "type": "address"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "institution",
+        "type": "address"
+      },
+      {
+        "indexed": false,
+        "internalType": "bytes32",
+        "name": "certificateId",
+        "type": "bytes32"
+      },
+      {
+        "indexed": false,
+        "internalType": "string",
+        "name": "degreeType",
+        "type": "string"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "graduationDate",
+        "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "timestamp",
+        "type": "uint256"
+      }
+    ],
+    "name": "StudentGraduated",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": false,
+        "internalType": "address",
+        "name": "account",
+        "type": "address"
+      }
+    ],
+    "name": "Unpaused",
+    "type": "event"
+  },
+  {
+    "inputs": [],
+    "name": "academicContract",
+    "outputs": [
+      {
+        "internalType": "contract IStudentAcademicManager",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "student",
+        "type": "address"
+      },
+      {
+        "internalType": "enum GraduationManager.GraduationStatus",
+        "name": "newStatus",
+        "type": "uint8"
+      },
+      {
+        "internalType": "string",
+        "name": "reason",
+        "type": "string"
+      }
+    ],
+    "name": "adminSetGraduationStatus",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "student",
+        "type": "address"
+      }
+    ],
+    "name": "approveGraduation",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "student",
+        "type": "address"
+      },
+      {
+        "internalType": "bytes32",
+        "name": "departmentKey",
+        "type": "bytes32"
+      }
+    ],
+    "name": "checkEligibility",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "student",
+        "type": "address"
+      },
+      {
+        "internalType": "bytes32",
+        "name": "certificateId",
+        "type": "bytes32"
+      },
+      {
+        "internalType": "string",
+        "name": "degreeType",
+        "type": "string"
+      }
+    ],
+    "name": "finalizeGraduation",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "student",
+        "type": "address"
+      }
+    ],
+    "name": "getGraduationRecord",
+    "outputs": [
+      {
+        "components": [
+          {
+            "internalType": "enum GraduationManager.GraduationStatus",
+            "name": "status",
+            "type": "uint8"
+          },
+          {
+            "internalType": "address",
+            "name": "enrollingInstitution",
+            "type": "address"
+          },
+          {
+            "internalType": "string",
+            "name": "department",
+            "type": "string"
+          },
+          {
+            "internalType": "uint256",
+            "name": "eligibilityCheckDate",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "eligibilityExpiryDate",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "approvalDate",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "graduationDate",
+            "type": "uint256"
+          },
+          {
+            "internalType": "address",
+            "name": "approvedBy",
+            "type": "address"
+          },
+          {
+            "internalType": "bytes32",
+            "name": "degreeCertificateId",
+            "type": "bytes32"
+          },
+          {
+            "internalType": "string",
+            "name": "degreeType",
+            "type": "string"
+          },
+          {
+            "internalType": "bool",
+            "name": "degreeIssued",
+            "type": "bool"
+          },
+          {
+            "internalType": "uint256",
+            "name": "lastUpdateTimestamp",
+            "type": "uint256"
+          }
+        ],
+        "internalType": "struct GraduationManager.GraduationRecord",
+        "name": "",
+        "type": "tuple"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "institution",
+        "type": "address"
+      },
+      {
+        "internalType": "bytes32",
+        "name": "department",
+        "type": "bytes32"
+      }
+    ],
+    "name": "getGraduationRequirements",
+    "outputs": [
+      {
+        "components": [
+          {
+            "internalType": "string",
+            "name": "department",
+            "type": "string"
+          },
+          {
+            "internalType": "uint256",
+            "name": "minimumCredits",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256",
+            "name": "minimumGpa",
+            "type": "uint256"
+          },
+          {
+            "internalType": "string[]",
+            "name": "requiredCourseIds",
+            "type": "string[]"
+          },
+          {
+            "internalType": "bool",
+            "name": "thesisRequired",
+            "type": "bool"
+          },
+          {
+            "internalType": "bool",
+            "name": "internshipRequired",
+            "type": "bool"
+          },
+          {
+            "internalType": "uint256",
+            "name": "eligibilityWindowDays",
+            "type": "uint256"
+          },
+          {
+            "internalType": "bool",
+            "name": "isActive",
+            "type": "bool"
+          }
+        ],
+        "internalType": "struct GraduationManager.GraduationRequirement",
+        "name": "",
+        "type": "tuple"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "student",
+        "type": "address"
+      }
+    ],
+    "name": "getGraduationStatus",
+    "outputs": [
+      {
+        "internalType": "enum GraduationManager.GraduationStatus",
+        "name": "",
+        "type": "uint8"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "institution",
+        "type": "address"
+      }
+    ],
+    "name": "getInstitutionGraduates",
+    "outputs": [
+      {
+        "internalType": "address[]",
+        "name": "",
+        "type": "address[]"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "name": "graduationRecords",
+    "outputs": [
+      {
+        "internalType": "enum GraduationManager.GraduationStatus",
+        "name": "status",
+        "type": "uint8"
+      },
+      {
+        "internalType": "address",
+        "name": "enrollingInstitution",
+        "type": "address"
+      },
+      {
+        "internalType": "string",
+        "name": "department",
+        "type": "string"
+      },
+      {
+        "internalType": "uint256",
+        "name": "eligibilityCheckDate",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "eligibilityExpiryDate",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "approvalDate",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "graduationDate",
+        "type": "uint256"
+      },
+      {
+        "internalType": "address",
+        "name": "approvedBy",
+        "type": "address"
+      },
+      {
+        "internalType": "bytes32",
+        "name": "degreeCertificateId",
+        "type": "bytes32"
+      },
+      {
+        "internalType": "string",
+        "name": "degreeType",
+        "type": "string"
+      },
+      {
+        "internalType": "bool",
+        "name": "degreeIssued",
+        "type": "bool"
+      },
+      {
+        "internalType": "uint256",
+        "name": "lastUpdateTimestamp",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      },
+      {
+        "internalType": "bytes32",
+        "name": "",
+        "type": "bytes32"
+      }
+    ],
+    "name": "graduationRequirements",
+    "outputs": [
+      {
+        "internalType": "string",
+        "name": "department",
+        "type": "string"
+      },
+      {
+        "internalType": "uint256",
+        "name": "minimumCredits",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "minimumGpa",
+        "type": "uint256"
+      },
+      {
+        "internalType": "bool",
+        "name": "thesisRequired",
+        "type": "bool"
+      },
+      {
+        "internalType": "bool",
+        "name": "internshipRequired",
+        "type": "bool"
+      },
+      {
+        "internalType": "uint256",
+        "name": "eligibilityWindowDays",
+        "type": "uint256"
+      },
+      {
+        "internalType": "bool",
+        "name": "isActive",
+        "type": "bool"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "name": "graduationStatus",
+    "outputs": [
+      {
+        "internalType": "enum GraduationManager.GraduationStatus",
+        "name": "",
+        "type": "uint8"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "identityContract",
+    "outputs": [
+      {
+        "internalType": "contract IIdentity",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      },
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "name": "institutionDepartments",
+    "outputs": [
+      {
+        "internalType": "bytes32",
+        "name": "",
+        "type": "bytes32"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      },
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "name": "institutionGraduates",
+    "outputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "owner",
+    "outputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "paused",
+    "outputs": [
+      {
+        "internalType": "bool",
+        "name": "",
+        "type": "bool"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "renounceOwnership",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "name": "requirementsConfigured",
+    "outputs": [
+      {
+        "internalType": "bool",
+        "name": "",
+        "type": "bool"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "string",
+        "name": "department",
+        "type": "string"
+      },
+      {
+        "internalType": "uint256",
+        "name": "minimumCredits",
+        "type": "uint256"
+      },
+      {
+        "internalType": "uint256",
+        "name": "minimumGpa",
+        "type": "uint256"
+      },
+      {
+        "internalType": "string[]",
+        "name": "requiredCourseIds",
+        "type": "string[]"
+      },
+      {
+        "internalType": "bool",
+        "name": "thesisRequired",
+        "type": "bool"
+      },
+      {
+        "internalType": "bool",
+        "name": "internshipRequired",
+        "type": "bool"
+      },
+      {
+        "internalType": "uint256",
+        "name": "eligibilityWindowDays",
+        "type": "uint256"
+      }
+    ],
+    "name": "setRequirements",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "newOwner",
+        "type": "address"
+      }
+    ],
+    "name": "transferOwnership",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "institution",
+        "type": "address"
+      },
+      {
+        "internalType": "address",
+        "name": "student",
+        "type": "address"
+      },
+      {
+        "internalType": "string",
+        "name": "",
+        "type": "string"
+      }
+    ],
+    "name": "validateIssuance",
+    "outputs": [
+      {
+        "internalType": "bool",
+        "name": "allowed",
+        "type": "bool"
+      },
+      {
+        "internalType": "string",
+        "name": "reason",
+        "type": "string"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  }
+]

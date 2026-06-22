@@ -1,0 +1,20 @@
+{
+  "network": "ganache",
+  "chainId": 1337,
+  "rpcUrl": "http://127.0.0.1:7545",
+  "deployer": "0x96036cFB5CCb4A8052aF45116151140d3EBE2b8b",
+  "deployedAt": "2026-06-20T04:27:32.816Z",
+  "addresses": {
+    "Identity": "0xd6d20F7f968A66436619BC3a30EfbeEB76f7F92c",
+    "CourseManagement": "0xd2361305b54773a73381Ad59F0b895A4A467B91D",
+    "StudentAcademicManager": "0x31265b6E6cd963E02156a68fe9147c372831E007",
+    "Certificates": "0x6992bB7819C1aFdbE19cec585c9371C1B0E31a87",
+    "ExamManagement": "0xbc8fEE89b2DF0D4f6E2900C28D8f856abFc06bBb",
+    "GraduationManager": "0x96f81F4ba9064D1B3B3b4CB682F0D9A04807F70E"
+  },
+  "wiring": {
+    "Certificates": {
+      "validationContract": "0x96f81F4ba9064D1B3B3b4CB682F0D9A04807F70E"
+    }
+  }
+}

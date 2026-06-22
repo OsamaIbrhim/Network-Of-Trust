@@ -1,0 +1,813 @@
+[
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "_identityContractAddress",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "nonpayable",
+    "type": "constructor"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "string",
+        "name": "courseId",
+        "type": "string"
+      },
+      {
+        "indexed": false,
+        "internalType": "string",
+        "name": "name",
+        "type": "string"
+      },
+      {
+        "indexed": false,
+        "internalType": "string",
+        "name": "department",
+        "type": "string"
+      }
+    ],
+    "name": "CourseAdded",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "string",
+        "name": "courseId",
+        "type": "string"
+      }
+    ],
+    "name": "CourseDeactivated",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "string",
+        "name": "courseId",
+        "type": "string"
+      },
+      {
+        "indexed": false,
+        "internalType": "string",
+        "name": "name",
+        "type": "string"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "credits",
+        "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "string",
+        "name": "department",
+        "type": "string"
+      }
+    ],
+    "name": "CourseDetailsUpdated",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "string",
+        "name": "courseId",
+        "type": "string"
+      },
+      {
+        "indexed": true,
+        "internalType": "string",
+        "name": "semester",
+        "type": "string"
+      },
+      {
+        "indexed": false,
+        "internalType": "string",
+        "name": "doctorName",
+        "type": "string"
+      }
+    ],
+    "name": "CourseOfferingAdded",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "string",
+        "name": "courseId",
+        "type": "string"
+      },
+      {
+        "indexed": true,
+        "internalType": "string",
+        "name": "semester",
+        "type": "string"
+      },
+      {
+        "indexed": false,
+        "internalType": "string",
+        "name": "doctorName",
+        "type": "string"
+      },
+      {
+        "indexed": false,
+        "internalType": "uint256",
+        "name": "examDate",
+        "type": "uint256"
+      },
+      {
+        "indexed": false,
+        "internalType": "string",
+        "name": "bookTitle",
+        "type": "string"
+      }
+    ],
+    "name": "CourseOfferingUpdated",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": false,
+        "internalType": "string",
+        "name": "oldSemester",
+        "type": "string"
+      },
+      {
+        "indexed": false,
+        "internalType": "string",
+        "name": "newSemester",
+        "type": "string"
+      }
+    ],
+    "name": "CurrentActiveSemesterUpdated",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": false,
+        "internalType": "string",
+        "name": "departmentName",
+        "type": "string"
+      }
+    ],
+    "name": "DepartmentAdded",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "previousOwner",
+        "type": "address"
+      },
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "newOwner",
+        "type": "address"
+      }
+    ],
+    "name": "OwnershipTransferred",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": false,
+        "internalType": "address",
+        "name": "account",
+        "type": "address"
+      }
+    ],
+    "name": "Paused",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      {
+        "indexed": false,
+        "internalType": "address",
+        "name": "account",
+        "type": "address"
+      }
+    ],
+    "name": "Unpaused",
+    "type": "event"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "string",
+        "name": "_courseId",
+        "type": "string"
+      },
+      {
+        "internalType": "string",
+        "name": "_name",
+        "type": "string"
+      },
+      {
+        "internalType": "uint256",
+        "name": "_credits",
+        "type": "uint256"
+      },
+      {
+        "internalType": "string",
+        "name": "_department",
+        "type": "string"
+      }
+    ],
+    "name": "addCourse",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "string",
+        "name": "_courseId",
+        "type": "string"
+      },
+      {
+        "internalType": "string",
+        "name": "_semester",
+        "type": "string"
+      },
+      {
+        "internalType": "string",
+        "name": "_doctorName",
+        "type": "string"
+      },
+      {
+        "internalType": "uint256",
+        "name": "_examDate",
+        "type": "uint256"
+      },
+      {
+        "internalType": "string",
+        "name": "_bookTitle",
+        "type": "string"
+      }
+    ],
+    "name": "addCourseOffering",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "string",
+        "name": "_departmentName",
+        "type": "string"
+      }
+    ],
+    "name": "addDepartment",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "string",
+        "name": "",
+        "type": "string"
+      },
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "name": "courseOfferingTerms",
+    "outputs": [
+      {
+        "internalType": "string",
+        "name": "",
+        "type": "string"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "string",
+        "name": "",
+        "type": "string"
+      },
+      {
+        "internalType": "string",
+        "name": "",
+        "type": "string"
+      }
+    ],
+    "name": "courseOfferings",
+    "outputs": [
+      {
+        "internalType": "string",
+        "name": "semester",
+        "type": "string"
+      },
+      {
+        "internalType": "string",
+        "name": "doctorName",
+        "type": "string"
+      },
+      {
+        "internalType": "uint256",
+        "name": "examDate",
+        "type": "uint256"
+      },
+      {
+        "internalType": "string",
+        "name": "bookTitle",
+        "type": "string"
+      },
+      {
+        "internalType": "bool",
+        "name": "isAvailableForEnrollment",
+        "type": "bool"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "string",
+        "name": "",
+        "type": "string"
+      }
+    ],
+    "name": "courses",
+    "outputs": [
+      {
+        "internalType": "string",
+        "name": "courseId",
+        "type": "string"
+      },
+      {
+        "internalType": "string",
+        "name": "name",
+        "type": "string"
+      },
+      {
+        "internalType": "uint256",
+        "name": "credits",
+        "type": "uint256"
+      },
+      {
+        "internalType": "string",
+        "name": "department",
+        "type": "string"
+      },
+      {
+        "internalType": "bool",
+        "name": "isActive",
+        "type": "bool"
+      },
+      {
+        "internalType": "uint256",
+        "name": "creationDate",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "currentActiveSemester",
+    "outputs": [
+      {
+        "internalType": "string",
+        "name": "",
+        "type": "string"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "string",
+        "name": "_courseId",
+        "type": "string"
+      }
+    ],
+    "name": "deactivateCourse",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "string",
+        "name": "",
+        "type": "string"
+      },
+      {
+        "internalType": "uint256",
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "name": "departmentCourses",
+    "outputs": [
+      {
+        "internalType": "string",
+        "name": "",
+        "type": "string"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "string",
+        "name": "_courseId",
+        "type": "string"
+      }
+    ],
+    "name": "getAllCourseOfferingsForCourse",
+    "outputs": [
+      {
+        "components": [
+          {
+            "internalType": "string",
+            "name": "semester",
+            "type": "string"
+          },
+          {
+            "internalType": "string",
+            "name": "doctorName",
+            "type": "string"
+          },
+          {
+            "internalType": "uint256",
+            "name": "examDate",
+            "type": "uint256"
+          },
+          {
+            "internalType": "string",
+            "name": "bookTitle",
+            "type": "string"
+          },
+          {
+            "internalType": "bool",
+            "name": "isAvailableForEnrollment",
+            "type": "bool"
+          }
+        ],
+        "internalType": "struct CourseManagement.CourseOffering[]",
+        "name": "",
+        "type": "tuple[]"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "getAllDepartments",
+    "outputs": [
+      {
+        "internalType": "string[]",
+        "name": "",
+        "type": "string[]"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "string",
+        "name": "_courseId",
+        "type": "string"
+      },
+      {
+        "internalType": "string",
+        "name": "_semester",
+        "type": "string"
+      }
+    ],
+    "name": "getCourseOfferingDetails",
+    "outputs": [
+      {
+        "internalType": "string",
+        "name": "semester",
+        "type": "string"
+      },
+      {
+        "internalType": "string",
+        "name": "doctorName",
+        "type": "string"
+      },
+      {
+        "internalType": "uint256",
+        "name": "examDate",
+        "type": "uint256"
+      },
+      {
+        "internalType": "string",
+        "name": "bookTitle",
+        "type": "string"
+      },
+      {
+        "internalType": "bool",
+        "name": "isAvailableForEnrollment",
+        "type": "bool"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "string",
+        "name": "_courseId",
+        "type": "string"
+      }
+    ],
+    "name": "getCourseStaticDetails",
+    "outputs": [
+      {
+        "internalType": "string",
+        "name": "courseId",
+        "type": "string"
+      },
+      {
+        "internalType": "string",
+        "name": "name",
+        "type": "string"
+      },
+      {
+        "internalType": "uint256",
+        "name": "credits",
+        "type": "uint256"
+      },
+      {
+        "internalType": "string",
+        "name": "department",
+        "type": "string"
+      },
+      {
+        "internalType": "bool",
+        "name": "isActive",
+        "type": "bool"
+      },
+      {
+        "internalType": "uint256",
+        "name": "creationDate",
+        "type": "uint256"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "string",
+        "name": "_departmentName",
+        "type": "string"
+      }
+    ],
+    "name": "getCoursesByDepartment",
+    "outputs": [
+      {
+        "components": [
+          {
+            "internalType": "string",
+            "name": "courseId",
+            "type": "string"
+          },
+          {
+            "internalType": "string",
+            "name": "name",
+            "type": "string"
+          },
+          {
+            "internalType": "uint256",
+            "name": "credits",
+            "type": "uint256"
+          },
+          {
+            "internalType": "string",
+            "name": "department",
+            "type": "string"
+          },
+          {
+            "internalType": "bool",
+            "name": "isActive",
+            "type": "bool"
+          },
+          {
+            "internalType": "uint256",
+            "name": "creationDate",
+            "type": "uint256"
+          }
+        ],
+        "internalType": "struct CourseManagement.Course[]",
+        "name": "",
+        "type": "tuple[]"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "string",
+        "name": "_courseId",
+        "type": "string"
+      }
+    ],
+    "name": "getLatestCourseOfferingDetails",
+    "outputs": [
+      {
+        "internalType": "string",
+        "name": "semester",
+        "type": "string"
+      },
+      {
+        "internalType": "string",
+        "name": "doctorName",
+        "type": "string"
+      },
+      {
+        "internalType": "uint256",
+        "name": "examDate",
+        "type": "uint256"
+      },
+      {
+        "internalType": "string",
+        "name": "bookTitle",
+        "type": "string"
+      },
+      {
+        "internalType": "bool",
+        "name": "isAvailableForEnrollment",
+        "type": "bool"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "identityContract",
+    "outputs": [
+      {
+        "internalType": "contract Identity",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "string",
+        "name": "_departmentName",
+        "type": "string"
+      }
+    ],
+    "name": "isDepartmentExist",
+    "outputs": [
+      {
+        "internalType": "bool",
+        "name": "",
+        "type": "bool"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "owner",
+    "outputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "paused",
+    "outputs": [
+      {
+        "internalType": "bool",
+        "name": "",
+        "type": "bool"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "renounceOwnership",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "string",
+        "name": "_semester",
+        "type": "string"
+      }
+    ],
+    "name": "setCurrentActiveSemester",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "newOwner",
+        "type": "address"
+      }
+    ],
+    "name": "transferOwnership",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "string",
+        "name": "_courseId",
+        "type": "string"
+      },
+      {
+        "internalType": "string",
+        "name": "_newName",
+        "type": "string"
+      },
+      {
+        "internalType": "uint256",
+        "name": "_newCredits",
+        "type": "uint256"
+      },
+      {
+        "internalType": "string",
+        "name": "_newDepartment",
+        "type": "string"
+      }
+    ],
+    "name": "updateCourseStaticDetails",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  }
+]
