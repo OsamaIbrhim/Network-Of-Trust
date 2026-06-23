@@ -1,6 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, useRef } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useWallet } from '../../../web3/useWallet';
+import Button from '../../../ui/Button/Button';
+import Card from '../../../ui/Card/Card';
+import Badge from '../../../ui/Badge';
+import Input from '../../../ui/Input';
+import Select from '../../../ui/Select';
+import { getCertificateContractReadOnly } from '../../../web3/contracts';
 
 interface CredentialItem {
   credentialId: string;
@@ -36,7 +42,7 @@ function truncateText(text: string, length = 14) {
 }
 
 export default function InstitutionCredentialsPage() {
-  const { account, ensureReady, getCertificate, isConnected, connect, sendTx, txPending, error: walletError } = useWallet();
+  const { account, ensureReady, isConnected, connect, sendTx, txPending, error: walletError } = useWallet();
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -54,7 +60,8 @@ export default function InstitutionCredentialsPage() {
   const [studentAddress, setStudentAddress] = useState('');
   const [degreeName, setDegreeName] = useState('');
   const [metadataOpen, setMetadataOpen] = useState(false);
-  const loadingRef = useRef(false);
+
+  const activeAccountRef = useRef<string | null>(null);
 
   const openPanelFromState = useMemo(() => {
     return (location.state as any)?.openIssuePanel === true;
@@ -62,22 +69,28 @@ export default function InstitutionCredentialsPage() {
 
   const loadCredentials = useCallback(async () => {
     if (!account) {
-      setCredentials([]);
-      setDetails({});
       return;
     }
 
-    if (loadingRef.current) return;
-    loadingRef.current = true;
+    if (activeAccountRef.current === account && loading) return;
+
+    activeAccountRef.current = account;
     setLoading(true);
     setError(null);
 
     try {
       const ready = await ensureReady();
-      if (!ready) throw new Error(walletError || 'Please connect MetaMask and switch to Ganache');
+      if (!ready) {
+        if (activeAccountRef.current !== account) return;
+        setError(walletError || 'Please connect MetaMask and switch to Ganache');
+        setLoading(false);
+        return;
+      }
 
-      const contract = getCertificate();
+      const contract = getCertificateContractReadOnly();
       const rawCerts = await contract.getUserCertificates(account);
+      if (activeAccountRef.current !== account) return;
+
       const parsed: CredentialItem[] = (Array.isArray(rawCerts) ? rawCerts : [])
         .map((item: any) => ({
           credentialId: String(item.certificate),
@@ -86,6 +99,7 @@ export default function InstitutionCredentialsPage() {
         .filter((item) => item.credentialId && item.credentialId !== '0x0000000000000000000000000000000000000000000000000000000000000000')
         .reverse();
 
+      if (activeAccountRef.current !== account) return;
       setCredentials(parsed);
       setPage(1);
       setDetails({});
@@ -93,6 +107,8 @@ export default function InstitutionCredentialsPage() {
       const verifyResults = await Promise.allSettled(
         parsed.map((item) => contract.verifyCertificate(item.credentialId)),
       );
+
+      if (activeAccountRef.current !== account) return;
 
       const resolvedDetails: Record<string, CredentialDetail> = {};
       verifyResults.forEach((result, index) => {
@@ -114,17 +130,35 @@ export default function InstitutionCredentialsPage() {
 
       setDetails(resolvedDetails);
     } catch (err: unknown) {
+      if (activeAccountRef.current !== account) return;
       setError(err instanceof Error ? err.message : 'Failed to load credentials');
     } finally {
-      setLoading(false);
-      loadingRef.current = false;
+      if (activeAccountRef.current === account) {
+        setLoading(false);
+      }
     }
   }, [account]);
 
   useEffect(() => {
-    if (!account) return;
-    loadCredentials();
-  }, [account]);
+    let active = true;
+
+    async function init() {
+      if (!account || !isConnected) return;
+
+      const ready = await ensureReady();
+      if (!ready) return;
+
+      if (active) {
+        loadCredentials();
+      }
+    }
+
+    init();
+
+    return () => {
+      active = false;
+    };
+  }, [account, isConnected]);
 
   useEffect(() => {
     if (openPanelFromState) {
@@ -170,18 +204,13 @@ export default function InstitutionCredentialsPage() {
     await navigator.clipboard.writeText(text);
   };
 
-  const handleRevoke = async (credentialId: string) => {
-    setError(null);
-    try {
-      const ready = await ensureReady();
-      if (!ready) throw new Error(walletError || 'Please connect MetaMask and switch to Ganache');
-      const contract = getCertificate();
-      await sendTx(contract.revokeCertificate(credentialId));
-      await loadCredentials();
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Failed to revoke credential');
+  const handleConnect = useCallback(() => {
+    if (!window.ethereum?.isMetaMask) {
+      navigate('/install-metamask');
+      return;
     }
-  };
+    connect();
+  }, [connect, navigate]);
 
   const openIssuePanel = () => {
     setPanelOpen(true);
@@ -200,7 +229,7 @@ export default function InstitutionCredentialsPage() {
     try {
       const ready = await ensureReady();
       if (!ready) throw new Error(walletError || 'Please connect MetaMask and switch to Ganache');
-      const contract = getCertificate();
+      const contract = getCertificateContractReadOnly();
       const ipfsHash = JSON.stringify({ degree: degreeName.trim() });
       const tx = await contract.issueCertificate(studentAddress.trim(), ipfsHash);
       const receipt = await tx.wait();
@@ -234,38 +263,55 @@ export default function InstitutionCredentialsPage() {
     }
   };
 
+  const getStatusBadgeVariant = (detail: CredentialDetail | undefined): 'active' | 'revoked' | 'pending' => {
+    if (!detail) return 'pending';
+    return detail.isValid ? 'active' : 'revoked';
+  };
+
+  const getStatusLabel = (detail: CredentialDetail | undefined): string => {
+    if (!detail) return 'Pending';
+    return detail.isValid ? 'Active' : 'Revoked';
+  };
+
   return (
-    <div className="space-y-6">
+    <div className="mx-auto w-full max-w-[1100px] space-y-12 px-4 py-6 sm:px-6 lg:px-8">
       <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <div>
-          <h1 className="text-2xl font-semibold text-slate-900">Credentials</h1>
-          <p className="text-sm text-slate-600 mt-1">Manage institutional credentials and issue new certificates.</p>
+          <h1 className="text-[26px] font-semibold text-slate-900">Credentials</h1>
+          <p className="text-sm text-slate-500 mt-1">Manage institutional credentials and issue new certificates.</p>
         </div>
-        <button
-          type="button"
-          onClick={openIssuePanel}
-          className="inline-flex items-center justify-center rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-800"
-        >
-          + Issue Credential
-        </button>
+        <Button onClick={openIssuePanel}>+ Issue Credential</Button>
       </div>
 
       <div className="grid gap-3 sm:grid-cols-3">
-        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-          <div className="text-sm font-medium text-slate-500">Issued</div>
-          <div className="mt-3 text-3xl font-semibold text-slate-900">{issuedCount}</div>
-        </div>
-        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-          <div className="text-sm font-medium text-slate-500">Verified</div>
-          <div className="mt-3 text-3xl font-semibold text-slate-900">{verifiedCount}</div>
-        </div>
-        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-          <div className="text-sm font-medium text-slate-500">Revoked</div>
-          <div className="mt-3 text-3xl font-semibold text-slate-900">{revokedCount}</div>
-        </div>
+        {loading ? (
+          <>
+            {Array.from({ length: 3 }).map((_, i) => (
+              <Card key={i} padding="sm">
+                <div className="h-4 w-14 animate-pulse rounded bg-slate-200" />
+                <div className="mt-3 h-7 w-12 animate-pulse rounded bg-slate-200" />
+              </Card>
+            ))}
+          </>
+        ) : (
+          <>
+            <Card padding="sm" hoverable>
+              <div className="text-sm font-medium text-slate-500">Issued</div>
+              <div className="mt-2 text-[22px] font-semibold text-slate-900">{issuedCount}</div>
+            </Card>
+            <Card padding="sm" hoverable>
+              <div className="text-sm font-medium text-slate-500">Verified</div>
+              <div className="mt-2 text-[22px] font-semibold text-slate-900">{verifiedCount}</div>
+            </Card>
+            <Card padding="sm" hoverable>
+              <div className="text-sm font-medium text-slate-500">Revoked</div>
+              <div className="mt-2 text-[22px] font-semibold text-slate-900">{revokedCount}</div>
+            </Card>
+          </>
+        )}
       </div>
 
-      <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+      <Card>
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex items-center gap-2 text-sm text-slate-600">
             <span className="inline-flex h-2.5 w-2.5 rounded-full bg-emerald-500" />
@@ -273,76 +319,66 @@ export default function InstitutionCredentialsPage() {
           </div>
           <div className="text-xs text-slate-500">Verification count is not available from the current backend contract API.</div>
         </div>
-      </div>
+      </Card>
 
-      <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+      <Card>
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex-1">
-            <h2 className="text-base font-semibold text-slate-900">Search and filter</h2>
-            <p className="text-sm text-slate-500">Filter student addresses and credential status.</p>
+            <h2 className="text-[16px] font-semibold text-slate-900">Search and filter</h2>
+            <p className="text-sm text-slate-500 mt-1">Filter student addresses and credential status.</p>
           </div>
           <div className="flex flex-wrap gap-3">
-            <button
-              type="button"
-              onClick={openIssuePanel}
-              className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800"
-            >
-              Issue Credential
-            </button>
-            <button
-              type="button"
-              onClick={() => navigate('/institution')}
-              className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
-            >
-              Back to Overview
-            </button>
+            <Button variant="primary" onClick={openIssuePanel}>Issue Credential</Button>
+            <Button variant="secondary" onClick={() => navigate('/institution')}>Back to Overview</Button>
           </div>
         </div>
 
-        <div className="mt-6 grid gap-4 md:grid-cols-3">
+        <div className="mt-4 grid gap-3 md:grid-cols-3">
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search student address"
-            className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 focus:border-slate-400 focus:outline-none"
+            disabled={loading}
+            className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-900 transition-all duration-200 ease-out focus:border-[#1F5EFF] focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
           />
           <select
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value as 'all' | 'active' | 'revoked')}
-            className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 focus:border-slate-400 focus:outline-none"
+            disabled={loading}
+            className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-900 transition-all duration-200 ease-out focus:border-[#1F5EFF] focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
           >
             <option value="all">All Statuses</option>
             <option value="active">Active</option>
             <option value="revoked">Revoked</option>
           </select>
-          <div className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900">
+          <div className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-500">
             Sorted by newest
           </div>
         </div>
-      </div>
+      </Card>
 
       <div className="space-y-4">
         <div className="hidden md:block">
-          <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+          <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
             <table className="min-w-full divide-y divide-slate-200 text-left text-sm text-slate-700">
               <thead className="bg-slate-50 text-slate-500">
                 <tr>
-                  <th className="px-4 py-4 font-semibold">Credential ID</th>
-                  <th className="px-4 py-4 font-semibold">Student</th>
-                  <th className="px-4 py-4 font-semibold">Degree</th>
-                  <th className="px-4 py-4 font-semibold">Status</th>
-                  <th className="px-4 py-4 font-semibold">Verifications</th>
-                  <th className="px-4 py-4 font-semibold">Actions</th>
+                  <th className="px-4 py-4 font-semibold text-slate-600">Credential ID</th>
+                  <th className="px-4 py-4 font-semibold text-slate-600">Student</th>
+                  <th className="px-4 py-4 font-semibold text-slate-600">Degree</th>
+                  <th className="px-4 py-4 font-semibold text-slate-600">Status</th>
+                  <th className="px-4 py-4 font-semibold text-slate-600">Verifications</th>
+                  <th className="px-4 py-4 font-semibold text-slate-600">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-200 bg-white">
+              <tbody className="divide-y divide-slate-100 bg-white">
                 {loading ? (
                   <tr>
-                    <td colSpan={6} className="px-4 py-8 text-center text-slate-500">Loading credentials…</td>
+                    <td colSpan={6} className="px-4 py-8 text-center text-slate-400">Loading credentials…</td>
                   </tr>
                 ) : filteredCredentials.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="px-4 py-8 text-center text-slate-500">No credentials found.</td>
+                    <td colSpan={6} className="px-4 py-8 text-center text-slate-400">No credentials found.</td>
                   </tr>
                 ) : (
                   pageItems.map((item) => {
@@ -350,40 +386,35 @@ export default function InstitutionCredentialsPage() {
                     const metadata = safeParseMetadata(item.ipfsHash);
                     const degree = detail?.degree || (metadata?.degree as string) || (metadata?.program as string) || item.ipfsHash;
                     return (
-                      <tr key={item.credentialId}>
+                      <tr key={item.credentialId} className="transition-colors duration-150 hover:bg-slate-50">
                         <td className="px-4 py-4 align-top text-sm text-slate-900">
                           <div className="flex items-center gap-2">
                             <span>{truncateText(item.credentialId, 20)}</span>
-                            <button
-                              type="button"
+                            <Button
+                              variant="ghost"
+                              size="sm"
                               onClick={() => handleCopy(item.credentialId)}
-                              className="rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-xs text-slate-600 hover:bg-slate-100"
                             >
                               Copy
-                            </button>
+                            </Button>
                           </div>
                         </td>
-                        <td className="px-4 py-4 align-top">{detail?.student ? formatAddress(detail.student) : 'Loading…'}</td>
+                        <td className="px-4 py-4 align-top">
+                          <span>{detail?.student ? formatAddress(detail.student) : 'Loading…'}</span>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleCopy(detail.student)}
+                          >
+                            Copy
+                          </Button>
+                        </td>
                         <td className="px-4 py-4 align-top">{degree}</td>
                         <td className="px-4 py-4 align-top">
-                          <span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${detail?.isValid ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'}`}>
-                            {detail ? (detail.isValid ? 'Active' : 'Revoked') : 'Pending'}
-                          </span>
+                          <Badge variant={getStatusBadgeVariant(detail)}>{getStatusLabel(detail)}</Badge>
                         </td>
                         <td className="px-4 py-4 align-top">—</td>
                         <td className="px-4 py-4 align-top">
-                          {detail?.isValid ? (
-                            <button
-                              type="button"
-                              onClick={() => handleRevoke(item.credentialId)}
-                              disabled={txPending}
-                              className="rounded-md bg-rose-600 px-3 py-2 text-xs font-medium text-white hover:bg-rose-700 disabled:opacity-50"
-                            >
-                              Revoke
-                            </button>
-                          ) : (
-                            <span className="text-xs text-slate-500">No action</span>
-                          )}
                         </td>
                       </tr>
                     );
@@ -396,28 +427,24 @@ export default function InstitutionCredentialsPage() {
 
         <div className="space-y-4 md:hidden">
           {loading ? (
-            <div className="rounded-3xl border border-slate-200 bg-white p-6 text-center text-slate-500">Loading credentials…</div>
+            <div className="rounded-xl border border-slate-200 bg-white p-6 text-center text-slate-400">Loading credentials…</div>
           ) : filteredCredentials.length === 0 ? (
-            <div className="rounded-3xl border border-slate-200 bg-white p-6 text-center text-slate-500">No credentials found.</div>
+            <div className="rounded-xl border border-slate-200 bg-white p-6 text-center text-slate-400">No credentials found.</div>
           ) : (
             pageItems.map((item) => {
               const detail = details[item.credentialId];
               const metadata = safeParseMetadata(item.ipfsHash);
               const degree = detail?.degree || (metadata?.degree as string) || (metadata?.program as string) || item.ipfsHash;
               return (
-                <div key={item.credentialId} className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
+                <Card key={item.credentialId} padding="sm">
                   <div className="flex items-center justify-between gap-2">
                     <div>
                       <div className="text-xs uppercase tracking-[0.18em] text-slate-400">Credential ID</div>
                       <div className="mt-2 text-sm font-semibold text-slate-900">{truncateText(item.credentialId, 18)}</div>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => handleCopy(item.credentialId)}
-                      className="rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-xs text-slate-600 hover:bg-slate-100"
-                    >
+                    <Button variant="ghost" size="sm" onClick={() => handleCopy(item.credentialId)}>
                       Copy
-                    </button>
+                    </Button>
                   </div>
                   <div className="mt-4 grid gap-3">
                     <div>
@@ -429,89 +456,70 @@ export default function InstitutionCredentialsPage() {
                       <div className="mt-1 text-sm font-medium text-slate-900">{degree}</div>
                     </div>
                     <div className="flex items-center justify-between gap-3">
-                      <span className={`inline-flex rounded-full px-3 py-1 text-xs font-semibold ${detail?.isValid ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'}`}>
-                        {detail ? (detail.isValid ? 'Active' : 'Revoked') : 'Pending'}
-                      </span>
-                      <span className="text-xs text-slate-500">Verifications: —</span>
-                    </div>
-                    <div>
-                      {detail?.isValid ? (
-                        <button
-                          type="button"
-                          onClick={() => handleRevoke(item.credentialId)}
-                          disabled={txPending}
-                          className="w-full rounded-md bg-rose-600 px-4 py-2 text-sm font-medium text-white hover:bg-rose-700 disabled:opacity-50"
-                        >
-                          Revoke
-                        </button>
-                      ) : (
-                        <div className="text-sm text-slate-500">No action available</div>
-                      )}
+                      <Badge variant={getStatusBadgeVariant(detail)}>{getStatusLabel(detail)}</Badge>
+                      <span className="text-xs text-slate-400">Verifications: —</span>
                     </div>
                   </div>
-                </div>
+                </Card>
               );
             })
           )}
         </div>
       </div>
 
-      <div className="flex items-center justify-between rounded-3xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600 shadow-sm">
-        <button
-          type="button"
+      <div className="flex items-center justify-between rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-500 shadow-sm">
+        <Button
+          variant="secondary"
+          size="sm"
           onClick={() => setPage(Math.max(1, currentPage - 1))}
           disabled={currentPage === 1}
-          className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-slate-700 disabled:opacity-50"
         >
           Previous
-        </button>
-        <div>Page {currentPage} of {totalPages}</div>
-        <button
-          type="button"
+        </Button>
+        <div className="text-slate-500">Page {currentPage} of {totalPages}</div>
+        <Button
+          variant="secondary"
+          size="sm"
           onClick={() => setPage(Math.min(totalPages, currentPage + 1))}
           disabled={currentPage === totalPages}
-          className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-slate-700 disabled:opacity-50"
         >
           Next
-        </button>
+        </Button>
       </div>
 
       {panelOpen && (
-        <div className="fixed inset-0 z-50 flex items-end justify-end bg-slate-900/50 px-4 py-6 backdrop-blur-sm md:items-center">
+        <div className="fixed inset-0 z-50 flex items-end justify-end bg-slate-900/40 px-4 py-6 backdrop-blur-sm md:items-center">
           <div className="fixed inset-0" onClick={() => setPanelOpen(false)} />
-          <div className="relative z-10 w-full max-w-[480px] rounded-t-3xl bg-white shadow-2xl transition-transform duration-200 md:rounded-3xl">
-            <div className="flex items-center justify-between border-b border-slate-200 px-6 py-5">
+          <div className="relative z-10 w-full max-w-[480px] rounded-t-xl bg-white shadow-md transition-transform duration-200 ease-out md:rounded-xl">
+            <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4">
               <div>
-                <h2 className="text-lg font-semibold text-slate-900">Issue Credential</h2>
-                <p className="text-sm text-slate-500">Issue a new certificate to a verified student.</p>
+                <h2 className="text-[16px] font-semibold text-slate-900">Issue Credential</h2>
+                <p className="text-sm text-slate-500 mt-1">Issue a new certificate to a verified student.</p>
               </div>
               <button
                 type="button"
                 onClick={() => setPanelOpen(false)}
-                className="rounded-full bg-slate-100 p-2 text-slate-600 hover:bg-slate-200"
+                className="rounded-lg bg-slate-100 px-2 py-1 text-sm text-slate-500 transition-all duration-200 ease-out hover:bg-slate-200 hover:text-slate-700 active:scale-[0.97]"
               >
                 ✕
               </button>
             </div>
-            <div className="p-6">
+            <div className="p-5">
               {issueResult ? (
                 <div className="space-y-4">
-                  <div className="rounded-3xl border border-emerald-100 bg-emerald-50 p-5">
-                    <p className="text-sm font-semibold text-emerald-800">Credential issued successfully</p>
-                    <p className="mt-2 text-sm text-slate-700">ID: <span className="font-mono break-all text-slate-900">{issueResult.credentialId}</span></p>
-                    <p className="text-sm text-slate-500">Transaction: <span className="font-mono text-slate-700">{issueResult.txHash}</span></p>
-                  </div>
+                  <Card padding="sm" className="border-emerald-100 bg-emerald-50">
+                    <div className="flex items-center gap-2">
+                      <svg className="h-5 w-5 shrink-0 text-emerald-600" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.857-9.809a.75.75 0 00-1.214-.882l-3.483 4.79-1.88-1.88a.75.75 0 10-1.06 1.061l2.5 2.5a.75.75 0 001.137-.089l4-5.5z" clipRule="evenodd" /></svg>
+                      <p className="text-sm font-semibold text-emerald-800">Credential issued successfully</p>
+                    </div>
+                    <p className="mt-3 text-sm text-slate-700">ID: <span className="font-mono break-all text-slate-900">{issueResult.credentialId}</span></p>
+                    <p className="mt-1 text-sm text-slate-500">Transaction: <span className="font-mono text-slate-700">{issueResult.txHash}</span></p>
+                  </Card>
                   <div className="grid gap-3">
-                    <button
-                      type="button"
-                      onClick={() => handleCopy(issueResult.credentialId)}
-                      className="rounded-md bg-slate-900 px-4 py-3 text-sm font-medium text-white hover:bg-slate-800"
-                    >
-                      Copy Credential ID
-                    </button>
+                    <Button onClick={() => handleCopy(issueResult.credentialId)}>Copy Credential ID</Button>
                     <Link
                       to={`/verify/${issueResult.credentialId}`}
-                      className="rounded-md border border-slate-300 px-4 py-3 text-sm font-medium text-slate-900 text-center"
+                      className="rounded-lg border border-slate-300 px-4 py-3 text-sm font-semibold text-slate-700 shadow-sm text-center transition-all duration-200 ease-out hover:bg-slate-50 active:scale-[0.98]"
                     >
                       View Verification Page
                     </Link>
@@ -519,47 +527,46 @@ export default function InstitutionCredentialsPage() {
                 </div>
               ) : (
                 <form onSubmit={handleIssueSubmit} className="space-y-4">
-                  <div>
-                    <label className="text-sm font-medium text-slate-700">Student Wallet Address</label>
-                    <input
-                      value={studentAddress}
-                      onChange={(e) => setStudentAddress(e.target.value)}
-                      required
-                      placeholder="0x..."
-                      className="mt-2 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 focus:border-slate-400 focus:outline-none"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-sm font-medium text-slate-700">Degree / Program</label>
-                    <input
-                      value={degreeName}
-                      onChange={(e) => setDegreeName(e.target.value)}
-                      required
-                      placeholder="Bachelor of Science in Computer Science"
-                      className="mt-2 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 focus:border-slate-400 focus:outline-none"
-                    />
-                  </div>
-                  <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
+                  <Input
+                    value={studentAddress}
+                    onChange={(e) => setStudentAddress(e.target.value)}
+                    required
+                    placeholder="0x..."
+                    label="Student Wallet Address"
+                  />
+                  <Input
+                    value={degreeName}
+                    onChange={(e) => setDegreeName(e.target.value)}
+                    required
+                    placeholder="Bachelor of Science in Computer Science"
+                    label="Degree / Program"
+                  />
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 transition-all duration-200 ease-out">
                     <button
                       type="button"
                       onClick={() => setMetadataOpen(!metadataOpen)}
-                      className="flex w-full items-center justify-between text-sm font-medium text-slate-700"
+                      className="flex w-full items-center justify-between text-sm font-medium text-slate-600 transition-all duration-200 ease-out hover:text-slate-900"
                     >
                       <span>Optional metadata</span>
-                      <span>{metadataOpen ? '−' : '+'}</span>
+                      <span className="transition-transform duration-200 ease-out" style={{ transform: metadataOpen ? 'rotate(180deg)' : 'rotate(0deg)' }}>⌄</span>
                     </button>
                     {metadataOpen && (
-                      <p className="mt-3 text-sm text-slate-500">Additional metadata support is coming soon. You may include JSON metadata in the IPFS payload later.</p>
+                      <p className="mt-3 text-sm text-slate-500 transition-all duration-200 ease-out">Additional metadata support is coming soon. You may include JSON metadata in the IPFS payload later.</p>
                     )}
                   </div>
-                  {issueError && <p className="text-sm text-rose-600">{issueError}</p>}
-                  <button
+                  {issueError && (
+                    <div className="flex items-center gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700 transition-all duration-200 ease-out">
+                      <svg className="h-4 w-4 shrink-0 text-rose-500" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.28 7.22a.75.75 0 00-1.06 1.06L8.94 10l-1.72 1.72a.75.75 0 101.06 1.06L10 11.06l1.72 1.72a.75.75 0 101.06-1.06L11.06 10l1.72-1.72a.75.75 0 00-1.06-1.06L10 8.94 8.28 7.22z" clipRule="evenodd" /></svg>
+                      <span>{issueError}</span>
+                    </div>
+                  )}
+                  <Button
                     type="submit"
                     disabled={issueLoading}
-                    className="w-full rounded-2xl bg-slate-900 px-4 py-3 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"
+                    className="w-full"
                   >
                     {issueLoading ? 'Issuing…' : 'Issue Credential'}
-                  </button>
+                  </Button>
                 </form>
               )}
             </div>
@@ -567,15 +574,16 @@ export default function InstitutionCredentialsPage() {
         </div>
       )}
 
-      {error && <div className="rounded-3xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">{error}</div>}
+      {error && (
+        <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700 transition-all duration-200 ease-out">
+          <div className="flex items-center gap-2">
+            <svg className="h-4 w-4 shrink-0 text-rose-500" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.28 7.22a.75.75 0 00-1.06 1.06L8.94 10l-1.72 1.72a.75.75 0 101.06 1.06L10 11.06l1.72 1.72a.75.75 0 101.06-1.06L11.06 10l1.72-1.72a.75.75 0 00-1.06-1.06L10 8.94 8.28 7.22z" clipRule="evenodd" /></svg>
+            <span>{error}</span>
+          </div>
+        </div>
+      )}
       {!isConnected && (
-        <button
-          type="button"
-          onClick={connect}
-          className="rounded-md bg-slate-900 px-4 py-3 text-sm font-medium text-white hover:bg-slate-800"
-        >
-          Connect MetaMask
-        </button>
+        <Button onClick={handleConnect}>Connect MetaMask</Button>
       )}
     </div>
   );
