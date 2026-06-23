@@ -12,3 +12,8 @@ declare module '../../../deployments/ganache.json' {
   };
   export default deployment;
 }
+
+declare module '*.css' {
+  const content: { [className: string]: string };
+  export default content;
+}
