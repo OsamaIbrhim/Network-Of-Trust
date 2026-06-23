@@ -6,7 +6,7 @@ const navItems = [
   { path: '/identity', label: 'Identity' },
   { path: '/certificates', label: 'Certificates' },
   { path: '/health', label: 'System Health' },
-  { path: '/institution/dashboard', label: 'Institution Dashboard' },
+  { path: '/institution', label: 'Institution Dashboard' },
   { path: '/student', label: 'Student Dashboard' },
   { path: '/employer', label: 'Employer Dashboard' },
   { path: '/dev/setup', label: 'Dev Setup' },
