@@ -16,6 +16,7 @@ interface MetaMaskState {
   chainId: string | null;
   isConnected: boolean;
   isCorrectChain: boolean;
+  isMetaMaskInstalled: boolean;
   error: string | null;
 }
 
@@ -27,14 +28,15 @@ export function useMetaMask() {
     chainId: null,
     isConnected: false,
     isCorrectChain: false,
+    isMetaMaskInstalled: !!window.ethereum?.isMetaMask,
     error: null,
   });
 
   const checkChain = (chainId: string) => chainId === TARGET_CHAIN;
 
   const updateState = useCallback(async () => {
-    if (!window.ethereum) {
-      setState((s) => ({ ...s, error: 'MetaMask not installed' }));
+    if (!window.ethereum?.isMetaMask) {
+      setState((s) => ({ ...s, isMetaMaskInstalled: false, account: null, isConnected: false, error: null }));
       return;
     }
     try {
@@ -45,6 +47,7 @@ export function useMetaMask() {
         chainId,
         isConnected: accounts.length > 0,
         isCorrectChain: checkChain(chainId),
+        isMetaMaskInstalled: true,
         error: null,
       });
     } catch {
@@ -52,10 +55,10 @@ export function useMetaMask() {
     }
   }, []);
 
-  const connect = useCallback(async () => {
-    if (!window.ethereum) {
-      setState((s) => ({ ...s, error: 'MetaMask not installed' }));
-      return;
+  const connect = useCallback(async (): Promise<boolean> => {
+    if (!window.ethereum?.isMetaMask) {
+      setState((s) => ({ ...s, isMetaMaskInstalled: false, error: null }));
+      return false;
     }
     try {
       const accounts = (await window.ethereum.request({ method: 'eth_requestAccounts' })) as string[];
@@ -65,15 +68,21 @@ export function useMetaMask() {
         chainId,
         isConnected: true,
         isCorrectChain: checkChain(chainId),
+        isMetaMaskInstalled: true,
         error: null,
       });
+      return true;
     } catch (err: any) {
       setState((s) => ({ ...s, error: err.code === 4001 ? 'Connection rejected' : 'Connection failed' }));
+      return false;
     }
   }, []);
 
   useEffect(() => {
-    if (!window.ethereum) return;
+    if (!window.ethereum?.isMetaMask) {
+      setState((s) => ({ ...s, isMetaMaskInstalled: false }));
+      return;
+    }
     updateState();
     const handleAccountsChanged = () => updateState();
     const handleChainChanged = () => updateState();
