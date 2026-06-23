@@ -1,8 +1,8 @@
-# LMS — Blockchain Learning Management System
+# Network Of Trust — powered dy Blockchain
 
-**LMS v1.0 Stable Baseline**
+**NoT v1.0 Stable Baseline**
 
-A Hardhat-based Ethereum LMS with an Express read API, React admin dashboard, and MetaMask for on-chain writes. Local development targets **Ganache** on chain ID **1337**.
+A Hardhat-based Ethereum NoT with an Express read API, React admin dashboard, and MetaMask for on-chain writes. Local development targets **Ganache** on chain ID **1337**.
 
 ## Prerequisites
 
