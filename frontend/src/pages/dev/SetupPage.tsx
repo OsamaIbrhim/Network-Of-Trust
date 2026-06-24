@@ -3,6 +3,8 @@ import { Link } from 'react-router-dom';
 import { requestAccounts } from '../../web3/provider';
 import { getIdentityContractReadOnly } from '../../web3/contracts';
 import { useWallet } from '../../web3/useWallet';
+import Button from '../../ui/Button/Button';
+import Card from '../../ui/Card/Card';
 
 const ROLE_LABELS: Record<number, string> = {
   0: 'None',
@@ -150,7 +152,7 @@ export default function SetupPage() {
   const isSubmitting = txPending;
 
   return (
-    <div className="max-w-lg space-y-6">
+    <div className="mx-auto max-w-lg space-y-6">
       <div>
         <h1 className="text-xl font-semibold text-gray-900">Dev Setup</h1>
         <p className="text-sm text-gray-600 mt-1">On-chain role bootstrapping for Trust Loop testing</p>
@@ -163,131 +165,134 @@ export default function SetupPage() {
       )}
 
       {isConnected && (
-        <div className="bg-white border border-gray-200 rounded p-5 space-y-3 text-sm">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <p className="text-gray-500">Connected Wallet</p>
-              <p className="font-mono text-xs break-all mt-0.5">{account}</p>
+        <Card>
+          <div className="bg-white p-5 space-y-3 text-sm">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-gray-500">Connected Wallet</p>
+                <p className="font-mono text-xs break-all mt-0.5">{account}</p>
+              </div>
+              <Button onClick={handleSwitchWallet}>
+                Switch Wallet
+              </Button>
             </div>
-            <button
-              type="button"
-              onClick={handleSwitchWallet}
-              className="shrink-0 px-3 py-1 border border-gray-300 rounded text-xs"
-            >
-              Switch Wallet
-            </button>
+
+            {loading && <p className="text-gray-600">Loading role…</p>}
+
+            {status && !loading && (
+              <>
+                <div>
+                  <p className="text-gray-500">On-Chain Role</p>
+                  <p className="font-medium text-gray-900 mt-0.5">
+                    {status.role === 'Institution' || status.role === 'Student' ? status.role : 'None'}
+                    {status.role !== 'None' && status.role !== 'Institution' && status.role !== 'Student' && (
+                      <span className="text-gray-500 font-normal"> ({status.role})</span>
+                    )}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-gray-500">Verified</p>
+                  <p className="font-medium text-gray-900 mt-0.5">{status.verified ? 'Yes' : 'No'}</p>
+                </div>
+              </>
+            )}
           </div>
-
-          {loading && <p className="text-gray-600">Loading role…</p>}
-
-          {status && !loading && (
-            <>
-              <div>
-                <p className="text-gray-500">On-Chain Role</p>
-                <p className="font-medium text-gray-900 mt-0.5">
-                  {status.role === 'Institution' || status.role === 'Student' ? status.role : 'None'}
-                  {status.role !== 'None' && status.role !== 'Institution' && status.role !== 'Student' && (
-                    <span className="text-gray-500 font-normal"> ({status.role})</span>
-                  )}
-                </p>
-              </div>
-              <div>
-                <p className="text-gray-500">Verified</p>
-                <p className="font-medium text-gray-900 mt-0.5">{status.verified ? 'Yes' : 'No'}</p>
-              </div>
-            </>
-          )}
-        </div>
+        </Card>
       )}
 
       {hasNoRole && isConnected && (
-        <div className="space-y-4">
-          <div className="bg-white border border-gray-200 rounded p-5 space-y-3">
-            <h2 className="text-sm font-medium text-gray-900">Register as Institution</h2>
-            <input
-              type="text"
-              value={instName}
-              onChange={(e) => setInstName(e.target.value)}
-              placeholder="Institution name"
-              className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
-            />
-            <button
-              type="button"
-              disabled={isSubmitting}
-              onClick={handleRegisterInstitution}
-              className="w-full bg-gray-900 text-white py-2 rounded text-sm disabled:opacity-50"
-            >
-              Register as Institution
-            </button>
-          </div>
+        <Card>
 
-          <div className="bg-white border border-gray-200 rounded p-5 space-y-3">
-            <h2 className="text-sm font-medium text-gray-900">Register as Student</h2>
-            <input
-              type="text"
-              value={studentInstitution}
-              onChange={(e) => setStudentInstitution(e.target.value)}
-              placeholder="Institution wallet address (0x...)"
-              className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
-            />
-            <div className="grid grid-cols-2 gap-2">
+          <div className="space-y-4">
+            <div className="bg-white border border-gray-200 rounded p-5 space-y-3">
+              <h2 className="text-sm font-medium text-gray-900">Register as Institution</h2>
               <input
                 type="text"
-                value={studentFirstName}
-                onChange={(e) => setStudentFirstName(e.target.value)}
-                placeholder="First name"
-                className="border border-gray-300 rounded px-3 py-2 text-sm"
+                value={instName}
+                onChange={(e) => setInstName(e.target.value)}
+                placeholder="Institution name"
+                className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
               />
-              <input
-                type="text"
-                value={studentLastName}
-                onChange={(e) => setStudentLastName(e.target.value)}
-                placeholder="Last name"
-                className="border border-gray-300 rounded px-3 py-2 text-sm"
-              />
+              <Button
+                type="button"
+                disabled={isSubmitting}
+                onClick={handleRegisterInstitution}
+              >
+                Register as Institution
+              </Button>
             </div>
-            <button
-              type="button"
-              disabled={isSubmitting}
-              onClick={handleRegisterStudent}
-              className="w-full bg-gray-900 text-white py-2 rounded text-sm disabled:opacity-50"
-            >
-              Register as Student
-            </button>
+
+            <div className="bg-white border border-gray-200 rounded p-5 space-y-3">
+              <h2 className="text-sm font-medium text-gray-900">Register as Student</h2>
+              <input
+                type="text"
+                value={studentInstitution}
+                onChange={(e) => setStudentInstitution(e.target.value)}
+                placeholder="Institution wallet address (0x...)"
+                className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
+              />
+              <div className="grid grid-cols-2 gap-2">
+                <input
+                  type="text"
+                  value={studentFirstName}
+                  onChange={(e) => setStudentFirstName(e.target.value)}
+                  placeholder="First name"
+                  className="border border-gray-300 rounded px-3 py-2 text-sm"
+                />
+                <input
+                  type="text"
+                  value={studentLastName}
+                  onChange={(e) => setStudentLastName(e.target.value)}
+                  placeholder="Last name"
+                  className="border border-gray-300 rounded px-3 py-2 text-sm"
+                />
+              </div>
+              <Button
+                type="button"
+                disabled={isSubmitting}
+                onClick={handleRegisterStudent}
+              >
+                Register as Student
+              </Button>
+            </div>
           </div>
-        </div>
+        </Card>
       )}
 
       {isAdmin && isConnected && (
-        <div className="bg-white border border-gray-200 rounded p-5 space-y-3">
-          <h2 className="text-sm font-medium text-gray-900">Admin: Verify User</h2>
-          <p className="text-xs text-gray-600">Required before institution/student can issue or graduate.</p>
-          <input
-            type="text"
-            value={verifyAddress}
-            onChange={(e) => setVerifyAddress(e.target.value)}
-            placeholder={account ? `Leave empty to verify ${account.slice(0, 10)}…` : 'User address'}
-            className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
-          />
-          <button
-            type="button"
-            disabled={isSubmitting}
-            onClick={handleVerifyUser}
-            className="w-full border border-gray-900 text-gray-900 py-2 rounded text-sm disabled:opacity-50"
-          >
-            Verify User
-          </button>
-        </div>
+        <Card>
+
+          <div className="bg-white border border-gray-200 rounded p-5 space-y-3">
+            <h2 className="text-sm font-medium text-gray-900">Admin: Verify User</h2>
+            <p className="text-xs text-gray-600">Required before institution/student can issue or graduate.</p>
+            <input
+              type="text"
+              value={verifyAddress}
+              onChange={(e) => setVerifyAddress(e.target.value)}
+              placeholder={account ? `Leave empty to verify ${account.slice(0, 10)}…` : 'User address'}
+              className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
+            />
+            <Button
+              type="button"
+              disabled={isSubmitting}
+              onClick={handleVerifyUser}
+            >
+              Verify User
+            </Button>
+          </div>
+        </Card>
       )}
 
       {(error || walletError) && <p className="text-sm text-red-700">{error || walletError}</p>}
       {message && <p className="text-sm text-green-800">{message}</p>}
 
-      <div className="text-sm space-y-1">
-        <p className="text-gray-600">Next steps:</p>
-        <Link to="/dev/graduation" className="block text-blue-700 underline">Graduation setup →</Link>
-        <Link to="/institution/issue" className="block text-blue-700 underline">Issue credential →</Link>
-      </div>
+      <Card>
+        <div className="text-sm space-y-1">
+          <p className="text-gray-600">Next steps:</p>
+          <Link to="/dev/graduation" className="block text-blue-700 underline">Graduation setup →</Link>
+          <Link to="/institution/issue" className="block text-blue-700 underline">Issue credential →</Link>
+        </div>
+      </Card>
     </div>
   );
 }

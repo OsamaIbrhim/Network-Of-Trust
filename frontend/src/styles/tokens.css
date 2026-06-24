@@ -9,7 +9,7 @@
 
   /* Neutral */
   --color-bg: #FFFFFF;
-  --color-surface: #8ab1d8;
+  --color-surface: #F9FAFB;
   --color-border: #E5E7EB;
   --color-muted: #6B7280;
 
@@ -18,7 +18,7 @@
   --radius-md: 12px;
 
   /* Shadows */
-  --shadow-sm: 0 4px 12px rgba(0,0,0,0.05);
+  --shadow-sm: 0 4px 12px rgba(0, 0, 0, 0.05);
 
   /* Spacing scale */
   --space-1: 8px;

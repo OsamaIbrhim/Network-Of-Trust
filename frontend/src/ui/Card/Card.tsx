@@ -6,14 +6,15 @@ interface CardProps {
   padding?: 'sm' | 'md' | 'lg';
   hoverable?: boolean;
   className?: string;
+  style?: React.CSSProperties;
 }
 
-export default function Card({ children, padding = 'md', hoverable = false, className = '' }: CardProps) {
+export default function Card({ children, padding = 'md', hoverable = false, className = '', style = {} }: CardProps) {
   const paddingClass = styles[`padding-${padding}`];
   const hoverClass = hoverable ? styles.cardHover : '';
 
   return (
-    <div className={`${styles.card} ${paddingClass} ${hoverClass} ${className}`}>
+    <div className={`${styles.card} ${paddingClass} ${hoverClass} ${className}`} style={style}>
       {children}
     </div>
   );

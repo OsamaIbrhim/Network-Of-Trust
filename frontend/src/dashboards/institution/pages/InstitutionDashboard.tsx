@@ -140,75 +140,84 @@ export default function InstitutionDashboard() {
   ], [issuedCount, revokedCount, validationMode]);
 
   return (
-    <div className="mx-auto w-full max-w-[1100px] space-y-12 px-4 py-6 sm:px-6 lg:px-8">
-      <Card>
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <div>
-            <div className="flex flex-wrap items-center gap-3">
-              <h1 className="text-[26px] font-semibold text-slate-900">{institutionName}</h1>
-              {isVerified !== null && (
-                <Badge variant={statusBadgeVariant}>{statusLabel}</Badge>
-              )}
+    <div className="min-h-screen" style={{ backgroundColor: 'var(--color-surface)' }}>
+      <div className="mx-auto w-full max-w-[1100px] space-y-8 px-4 py-6 sm:px-6 lg:px-8">
+        <Card
+          style={{
+            backgroundColor: 'var(--color-bg)',
+            padding: 'var(--space-5)',
+            borderRadius: 'var(--radius-md)',
+            borderBottom: '1px solid var(--color-border)',
+          }}
+        >
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <div className="flex flex-wrap items-center gap-3">
+                <h1 className="text-[28px] font-semibold text-slate-900" style={{ letterSpacing: '-0.01em' }}>{institutionName}</h1>
+                {isVerified !== null && (
+                  <Badge variant={statusBadgeVariant}>{statusLabel}</Badge>
+                )}
+              </div>
+              <p className="mt-2 max-w-2xl text-xs text-slate-500">Institution trust surface for credential issuance and verification. Use the credentials page to manage issued certificates and revoke when needed.</p>
             </div>
-            <p className="mt-3 max-w-2xl text-sm text-slate-500">Institution trust surface for credential issuance and verification. Use the credentials page to manage issued certificates and revoke when needed.</p>
-          </div>
-          <div className="flex flex-wrap gap-3">
-            <Button onClick={() => navigate('/institution/credentials')}>
-              View Credentials
-            </Button>
-            <Button variant="secondary" onClick={() => navigate('/institution/issue')}>
-              Issue Credential
-            </Button>
-          </div>
-        </div>
-      </Card>
-
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {loading ? (
-          <>
-            {Array.from({ length: 4 }).map((_, i) => (
-              <Card key={i} padding="sm">
-                <div className="h-4 w-28 animate-pulse rounded bg-slate-200" />
-                <div className="mt-3 h-7 w-16 animate-pulse rounded bg-slate-200" />
-              </Card>
-            ))}
-          </>
-        ) : (
-          <>
-            {metricLabels.map((label, i) => (
-              <Card key={label} padding="sm" hoverable>
-                <p className="text-sm font-medium text-slate-500">{label}</p>
-                <p className="mt-2 text-[22px] font-semibold text-slate-900">{metricValues[i]}</p>
-              </Card>
-            ))}
-          </>
-        )}
-      </div>
-
-      <Card>
-        <div className="flex items-center justify-between gap-4">
-          <div>
-            <h2 className="text-[16px] font-semibold text-slate-900">Institution trust summary</h2>
-            <p className="mt-2 text-sm text-slate-500">A clean view of your current credential issuance and validation status.</p>
-          </div>
-          <div className="text-sm text-slate-500">{loading ? 'Refreshing…' : 'Updated recently'}</div>
-        </div>
-        {error && (
-          <div className="mt-4 flex items-center gap-2 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-            <svg className="h-4 w-4 shrink-0 text-rose-500" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.28 7.22a.75.75 0 00-1.06 1.06L8.94 10l-1.72 1.72a.75.75 0 101.06 1.06L10 11.06l1.72 1.72a.75.75 0 101.06-1.06L11.06 10l1.72-1.72a.75.75 0 00-1.06-1.06L10 8.94 8.28 7.22z" clipRule="evenodd" /></svg>
-            <span>{error}</span>
-          </div>
-        )}
-      </Card>
-
-      {!isConnected && (
-        <Card>
-          <p className="text-sm text-slate-600">Connect your institution wallet to view credential issuance metrics and manage certificates.</p>
-          <div className="mt-4">
-            <Button onClick={handleConnect}>Connect MetaMask</Button>
+            <div className="flex flex-wrap gap-2 lg:justify-end">
+              <Button onClick={() => navigate('/institution/credentials')}>
+                View Credentials
+              </Button>
+              <Button variant="secondary" onClick={() => navigate('/institution/issue')}>
+                Issue Credential
+              </Button>
+            </div>
           </div>
         </Card>
-      )}
+
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          {loading ? (
+            <>
+              {Array.from({ length: 4 }).map((_, i) => (
+                <Card key={i} padding="sm">
+                  <div className="h-3 w-24 animate-pulse rounded bg-slate-200" />
+                  <div className="mt-2 h-7 w-14 animate-pulse rounded bg-slate-200" />
+                </Card>
+              ))}
+            </>
+          ) : (
+            <>
+              {metricLabels.map((label, i) => (
+                <Card key={label} padding="sm" hoverable>
+                  <p className="text-xs font-medium text-slate-500">{label}</p>
+                  <p className="mt-1 text-[26px] font-semibold text-slate-900">{metricValues[i]}</p>
+                </Card>
+              ))}
+            </>
+          )}
+        </div>
+
+        <Card style={{ marginTop: 'var(--space-5)', borderTop: '1px solid var(--color-border)', borderRadius: 0 }}>
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <h2 className="text-[16px] font-semibold text-slate-900">Institution trust summary</h2>
+              <p className="mt-1 text-xs text-slate-500">A clean view of your current credential issuance and validation status.</p>
+            </div>
+            <div className="text-xs text-slate-500">{loading ? 'Refreshing…' : 'Updated recently'}</div>
+          </div>
+          {error && (
+            <div className="mt-4 flex items-center gap-2 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+              <svg className="h-4 w-4 shrink-0 text-rose-500" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.28 7.22a.75.75 0 00-1.06 1.06L8.94 10l-1.72 1.72a.75.75 0 101.06 1.06L10 11.06l1.72 1.72a.75.75 0 101.06-1.06L11.06 10l1.72-1.72a.75.75 0 00-1.06-1.06L10 8.94 8.28 7.22z" clipRule="evenodd" /></svg>
+              <span>{error}</span>
+            </div>
+          )}
+        </Card>
+
+        {!isConnected && (
+          <Card>
+            <p className="text-sm text-slate-600">Connect your institution wallet to view credential issuance metrics and manage certificates.</p>
+            <div className="mt-4">
+              <Button onClick={handleConnect}>Connect MetaMask</Button>
+            </div>
+          </Card>
+        )}
+      </div>
     </div>
   );
 }

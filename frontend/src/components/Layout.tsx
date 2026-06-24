@@ -11,6 +11,7 @@ const navItems = [
   { path: '/employer', label: 'Employer Dashboard' },
   { path: '/dev/setup', label: 'Dev Setup' },
   { path: '/dev/graduation', label: 'Dev Graduation' },
+  { path: '/dev/academic', label: 'Dev Academic' },
 ];
 
 export default function Layout({ children, currentPath, navigate }: {

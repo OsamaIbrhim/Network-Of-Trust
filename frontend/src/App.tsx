@@ -7,7 +7,7 @@ import { StudentDashboard } from './dashboards/student';
 import { EmployerDashboard } from './dashboards/employer';
 import VerifyCredentialPage from './pages/VerifyCredentialPage';
 import InstallMetaMaskPage from './pages/InstallMetaMaskPage';
-import { SetupPage, GraduationSetupPage } from './pages/dev';
+import { SetupPage, GraduationSetupPage, AcademicTestPage } from './pages/dev';
 
 export default function App() {
   const navigate = useNavigate();
@@ -34,6 +34,7 @@ export default function App() {
                 <Route path="/employer" element={<EmployerDashboard />} />
                 <Route path="/dev/setup" element={<SetupPage />} />
                 <Route path="/dev/graduation" element={<GraduationSetupPage />} />
+                <Route path="/dev/academic" element={<AcademicTestPage />} />
               </Routes>
             </Layout>
           </RoleRouter>

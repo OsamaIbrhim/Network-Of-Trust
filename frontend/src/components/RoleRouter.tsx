@@ -13,16 +13,12 @@ const ROLE_ROUTES: Record<UserRole, string> = {
   unknown: '/apply',
 };
 
-/**
- * Maps Identity contract UserRole enum to string.
- * Expected enum values: 0 = None, 1 = Student, 2 = Institution, 3 = Admin, 4 = Employer
- */
 function mapRoleFromContract(roleUint: number): UserRole {
   switch (roleUint) {
     case 1: return 'student';
     case 2: return 'institution';
-    case 3: return 'admin';
-    case 4: return 'employer';
+    case 3: return 'employer';
+    case 4: return 'admin';
     default: return 'unknown';
   }
 }
@@ -52,11 +48,13 @@ export default function RoleRouter({ children }: { children: React.ReactNode }) 
         const resolvedRole = mapRoleFromContract(roleUint);
         setRole(resolvedRole);
 
-        // Admin has access to all routes, so we don't redirect
-        if (resolvedRole === 'admin') {
-          // Just render children without navigation
-          return;
+        if (location.pathname === '/') {
+          const targetPath = ROLE_ROUTES[resolvedRole];
+          if (targetPath) {
+            navigate(targetPath, { replace: true });
+          }
         }
+        
       } catch {
         if (cancelled) return;
         setRole('unknown');
