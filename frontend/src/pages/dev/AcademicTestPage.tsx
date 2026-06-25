@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { keccak256, toUtf8Bytes } from 'ethers';
 import { useWallet } from '../../web3/useWallet';
 import Button from '../../ui/Button/Button';
 import Card from '../../ui/Card/Card';
@@ -14,31 +15,35 @@ function initState(): ActionState {
 }
 
 export default function AcademicTestPage() {
-  const { account, isConnected, connect, ensureReady, sendTx, txPending, getIdentity, getCourse, getAcademic, getGraduation, getCertificate, error: walletError } = useWallet();
-  const [pageError, setPageError] = useState<string | null>(null);
+  const { account, isConnected, connect, ensureReady, sendTx, txPending, getCourse, getAcademic, getGraduation, getCertificate, error: walletError } = useWallet();
 
   // Department
   const [deptName, setDeptName] = useState('');
   const [deptState, setDeptState] = useState<ActionState>(initState);
 
-  // Course
-  const [courseDeptId, setCourseDeptId] = useState('');
+  // Course — courseId, name, credits, department (string name, not numeric ID)
+  const [courseId, setCourseId] = useState('');
   const [courseName, setCourseName] = useState('');
+  const [courseCredits, setCourseCredits] = useState('');
+  const [courseDept, setCourseDept] = useState('');
   const [courseState, setCourseState] = useState<ActionState>(initState);
 
-  // Enrollment
+  // Enrollment — student address, courseId string, semester string
   const [enrollAddress, setEnrollAddress] = useState('');
   const [enrollCourseId, setEnrollCourseId] = useState('');
+  const [enrollSemester, setEnrollSemester] = useState('');
   const [enrollState, setEnrollState] = useState<ActionState>(initState);
 
-  // Grade
+  // Grade — student address, courseId string, semester string, grade number
   const [gradeAddress, setGradeAddress] = useState('');
   const [gradeCourseId, setGradeCourseId] = useState('');
+  const [gradeSemester, setGradeSemester] = useState('');
   const [gradeValue, setGradeValue] = useState('');
   const [gradeState, setGradeState] = useState<ActionState>(initState);
 
-  // Graduation
+  // Graduation — student address, department string (for computing deptKey)
   const [gradAddress, setGradAddress] = useState('');
+  const [gradDept, setGradDept] = useState('');
   const [eligibilityState, setEligibilityState] = useState<{ eligible: boolean | null; message: string | null }>({ eligible: null, message: null });
   const [approveGradState, setApproveGradState] = useState<ActionState>(initState);
 
@@ -47,7 +52,6 @@ export default function AcademicTestPage() {
   const [certState, setCertState] = useState<ActionState>(initState);
 
   async function runAction(
-    label: string,
     setState: (s: ActionState) => void,
     action: () => Promise<void>
   ) {
@@ -65,49 +69,61 @@ export default function AcademicTestPage() {
     }
   }
 
-  async function handleCreateDepartment() {
-    await runAction('Create Department', setDeptState, async () => {
-      const contract = getIdentity();
-      const txHash = await sendTx(contract.createDepartment(deptName.trim()));
-      setDeptState({ loading: false, error: null, success: `Department created. Tx: ${txHash}` });
+  // 1. Add Department — CourseManagement.addDepartment(name)
+  async function handleAddDepartment() {
+    await runAction(setDeptState, async () => {
+      const contract = getCourse();
+      const txHash = await sendTx(contract.addDepartment(deptName.trim()));
+      setDeptState({ loading: false, error: null, success: `Department added. Tx: ${txHash}` });
     });
   }
 
+  // 2. Add Course — CourseManagement.addCourse(courseId, name, credits, department)
   async function handleAddCourse() {
-    await runAction('Add Course', setCourseState, async () => {
+    await runAction(setCourseState, async () => {
       const contract = getCourse();
-      const txHash = await sendTx(contract.addCourse(Number(courseDeptId), courseName.trim()));
+      const txHash = await sendTx(
+        contract.addCourse(courseId.trim(), courseName.trim(), Number(courseCredits), courseDept.trim())
+      );
       setCourseState({ loading: false, error: null, success: `Course added. Tx: ${txHash}` });
     });
   }
 
+  // 3. Enroll Student — StudentAcademicManager.enrollStudent(address, courseId, semester)
   async function handleEnrollStudent() {
-    await runAction('Enroll Student', setEnrollState, async () => {
+    await runAction(setEnrollState, async () => {
       const contract = getAcademic();
-      const txHash = await sendTx(contract.enrollStudent(enrollAddress.trim(), Number(enrollCourseId)));
+      const txHash = await sendTx(
+        contract.enrollStudent(enrollAddress.trim(), enrollCourseId.trim(), enrollSemester.trim())
+      );
       setEnrollState({ loading: false, error: null, success: `Student enrolled. Tx: ${txHash}` });
     });
   }
 
-  async function handleAssignGrade() {
-    await runAction('Assign Grade', setGradeState, async () => {
+  // 4. Update Grade — StudentAcademicManager.updateGrade(address, courseId, semester, grade)
+  async function handleUpdateGrade() {
+    await runAction(setGradeState, async () => {
       const contract = getAcademic();
-      const txHash = await sendTx(contract.assignGrade(gradeAddress.trim(), Number(gradeCourseId), Number(gradeValue)));
-      setGradeState({ loading: false, error: null, success: `Grade assigned. Tx: ${txHash}` });
+      const txHash = await sendTx(
+        contract.updateGrade(gradeAddress.trim(), gradeCourseId.trim(), gradeSemester.trim(), Number(gradeValue))
+      );
+      setGradeState({ loading: false, error: null, success: `Grade updated. Tx: ${txHash}` });
     });
   }
 
+  // 5a. Check Eligibility — GraduationManager.checkEligibility(student, deptKey) — this is a TX
   async function handleCheckEligibility() {
     setEligibilityState({ eligible: null, message: null });
     try {
       const ready = await ensureReady();
-      if (!ready) return;
+      if (!ready) {
+        setEligibilityState({ eligible: false, message: walletError || 'Wallet not ready' });
+        return;
+      }
+      const deptKey = keccak256(toUtf8Bytes(gradDept.trim() || 'Computer Science'));
       const contract = getGraduation();
-      const eligible = await contract.checkGraduationEligibility(gradAddress.trim());
-      setEligibilityState({
-        eligible: Boolean(eligible),
-        message: eligible ? '✅ Student is eligible for graduation' : '❌ Student is NOT eligible for graduation',
-      });
+      const txHash = await sendTx(contract.checkEligibility(gradAddress.trim(), deptKey));
+      setEligibilityState({ eligible: true, message: `✅ Eligibility checked. Tx: ${txHash}` });
     } catch (err: unknown) {
       setEligibilityState({
         eligible: false,
@@ -116,16 +132,18 @@ export default function AcademicTestPage() {
     }
   }
 
+  // 5b. Approve Graduation — GraduationManager.approveGraduation(student)
   async function handleApproveGraduation() {
-    await runAction('Approve Graduation', setApproveGradState, async () => {
+    await runAction(setApproveGradState, async () => {
       const contract = getGraduation();
       const txHash = await sendTx(contract.approveGraduation(gradAddress.trim()));
       setApproveGradState({ loading: false, error: null, success: `Graduation approved. Tx: ${txHash}` });
     });
   }
 
+  // 6. Issue Certificate — Certificates.issueCertificate(student, ipfsHash)
   async function handleIssueCertificate() {
-    await runAction('Issue Certificate', setCertState, async () => {
+    await runAction(setCertState, async () => {
       const contract = getCertificate();
       const txHash = await sendTx(contract.issueCertificate(certAddress.trim(), '{"degree":"Bachelor of Science"}'));
       setCertState({ loading: false, error: null, success: `Certificate issued. Tx: ${txHash}` });
@@ -151,7 +169,10 @@ export default function AcademicTestPage() {
 
       {/* Section 1 — Department */}
       <Card>
-        <h2 className="text-sm font-semibold text-gray-900 mb-3">1. Create Department</h2>
+        <h2 className="text-sm font-semibold text-gray-900 mb-3">1. Add Department</h2>
+        <p className="text-xs text-gray-500 mb-3">
+          Calls <code>CourseManagement.addDepartment(name)</code>
+        </p>
         <div className="space-y-3">
           <input
             type="text"
@@ -160,8 +181,8 @@ export default function AcademicTestPage() {
             placeholder="Department name (e.g. Computer Science)"
             className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
           />
-          <Button onClick={handleCreateDepartment} disabled={actionDisabled || !deptName.trim()}>
-            Create Department
+          <Button onClick={handleAddDepartment} disabled={actionDisabled || !deptName.trim()}>
+            Add Department
           </Button>
           {deptState.error && <p className="text-sm text-red-700">{deptState.error}</p>}
           {deptState.success && <p className="text-sm text-green-800 break-all">{deptState.success}</p>}
@@ -171,12 +192,15 @@ export default function AcademicTestPage() {
       {/* Section 2 — Course */}
       <Card>
         <h2 className="text-sm font-semibold text-gray-900 mb-3">2. Add Course</h2>
+        <p className="text-xs text-gray-500 mb-3">
+          Calls <code>CourseManagement.addCourse(courseId, name, credits, department)</code>
+        </p>
         <div className="space-y-3">
           <input
-            type="number"
-            value={courseDeptId}
-            onChange={(e) => setCourseDeptId(e.target.value)}
-            placeholder="Department ID (from create above)"
+            type="text"
+            value={courseId}
+            onChange={(e) => setCourseId(e.target.value)}
+            placeholder="Course ID (e.g. CS101)"
             className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
           />
           <input
@@ -186,7 +210,24 @@ export default function AcademicTestPage() {
             placeholder="Course name (e.g. Data Structures)"
             className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
           />
-          <Button onClick={handleAddCourse} disabled={actionDisabled || !courseDeptId.trim() || !courseName.trim()}>
+          <input
+            type="number"
+            value={courseCredits}
+            onChange={(e) => setCourseCredits(e.target.value)}
+            placeholder="Credits (e.g. 3)"
+            className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
+          />
+          <input
+            type="text"
+            value={courseDept}
+            onChange={(e) => setCourseDept(e.target.value)}
+            placeholder="Department name (must match an existing dept)"
+            className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
+          />
+          <Button
+            onClick={handleAddCourse}
+            disabled={actionDisabled || !courseId.trim() || !courseName.trim() || !courseCredits.trim() || !courseDept.trim()}
+          >
             Add Course
           </Button>
           {courseState.error && <p className="text-sm text-red-700">{courseState.error}</p>}
@@ -197,6 +238,9 @@ export default function AcademicTestPage() {
       {/* Section 3 — Enrollment */}
       <Card>
         <h2 className="text-sm font-semibold text-gray-900 mb-3">3. Enroll Student</h2>
+        <p className="text-xs text-gray-500 mb-3">
+          Calls <code>StudentAcademicManager.enrollStudent(address, courseId, semester)</code>
+        </p>
         <div className="space-y-3">
           <input
             type="text"
@@ -206,13 +250,23 @@ export default function AcademicTestPage() {
             className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
           />
           <input
-            type="number"
+            type="text"
             value={enrollCourseId}
             onChange={(e) => setEnrollCourseId(e.target.value)}
-            placeholder="Course ID"
+            placeholder="Course ID (e.g. CS101)"
             className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
           />
-          <Button onClick={handleEnrollStudent} disabled={actionDisabled || !enrollAddress.trim() || !enrollCourseId.trim()}>
+          <input
+            type="text"
+            value={enrollSemester}
+            onChange={(e) => setEnrollSemester(e.target.value)}
+            placeholder="Semester (e.g. Fall2025)"
+            className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
+          />
+          <Button
+            onClick={handleEnrollStudent}
+            disabled={actionDisabled || !enrollAddress.trim() || !enrollCourseId.trim() || !enrollSemester.trim()}
+          >
             Enroll Student
           </Button>
           {enrollState.error && <p className="text-sm text-red-700">{enrollState.error}</p>}
@@ -222,7 +276,10 @@ export default function AcademicTestPage() {
 
       {/* Section 4 — Grade */}
       <Card>
-        <h2 className="text-sm font-semibold text-gray-900 mb-3">4. Assign Grade</h2>
+        <h2 className="text-sm font-semibold text-gray-900 mb-3">4. Update Grade</h2>
+        <p className="text-xs text-gray-500 mb-3">
+          Calls <code>StudentAcademicManager.updateGrade(address, courseId, semester, grade)</code>
+        </p>
         <div className="space-y-3">
           <input
             type="text"
@@ -232,21 +289,31 @@ export default function AcademicTestPage() {
             className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
           />
           <input
-            type="number"
+            type="text"
             value={gradeCourseId}
             onChange={(e) => setGradeCourseId(e.target.value)}
-            placeholder="Course ID"
+            placeholder="Course ID (e.g. CS101)"
+            className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
+          />
+          <input
+            type="text"
+            value={gradeSemester}
+            onChange={(e) => setGradeSemester(e.target.value)}
+            placeholder="Semester (e.g. Fall2025)"
             className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
           />
           <input
             type="number"
             value={gradeValue}
             onChange={(e) => setGradeValue(e.target.value)}
-            placeholder="Grade (e.g. 85)"
+            placeholder="Grade (0–100)"
             className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
           />
-          <Button onClick={handleAssignGrade} disabled={actionDisabled || !gradeAddress.trim() || !gradeCourseId.trim() || !gradeValue.trim()}>
-            Assign Grade
+          <Button
+            onClick={handleUpdateGrade}
+            disabled={actionDisabled || !gradeAddress.trim() || !gradeCourseId.trim() || !gradeSemester.trim() || !gradeValue.trim()}
+          >
+            Update Grade
           </Button>
           {gradeState.error && <p className="text-sm text-red-700">{gradeState.error}</p>}
           {gradeState.success && <p className="text-sm text-green-800 break-all">{gradeState.success}</p>}
@@ -256,6 +323,10 @@ export default function AcademicTestPage() {
       {/* Section 5 — Graduation */}
       <Card>
         <h2 className="text-sm font-semibold text-gray-900 mb-3">5. Graduation</h2>
+        <p className="text-xs text-gray-500 mb-3">
+          Calls <code>GraduationManager.checkEligibility(student, deptKey)</code> then{' '}
+          <code>approveGraduation(student)</code>
+        </p>
         <div className="space-y-3">
           <input
             type="text"
@@ -264,11 +335,25 @@ export default function AcademicTestPage() {
             placeholder="Student wallet address (0x...)"
             className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
           />
+          <input
+            type="text"
+            value={gradDept}
+            onChange={(e) => setGradDept(e.target.value)}
+            placeholder="Department name (e.g. Computer Science)"
+            className="w-full border border-gray-300 rounded px-3 py-2 text-sm"
+          />
           <div className="flex flex-wrap gap-2">
-            <Button onClick={handleCheckEligibility} disabled={!gradAddress.trim()} variant="secondary">
+            <Button
+              onClick={handleCheckEligibility}
+              disabled={actionDisabled || !gradAddress.trim() || !gradDept.trim()}
+              variant="secondary"
+            >
               Check Eligibility
             </Button>
-            <Button onClick={handleApproveGraduation} disabled={actionDisabled || !gradAddress.trim()}>
+            <Button
+              onClick={handleApproveGraduation}
+              disabled={actionDisabled || !gradAddress.trim()}
+            >
               Approve Graduation
             </Button>
           </div>
@@ -285,6 +370,9 @@ export default function AcademicTestPage() {
       {/* Section 6 — Certificate */}
       <Card>
         <h2 className="text-sm font-semibold text-gray-900 mb-3">6. Issue Certificate</h2>
+        <p className="text-xs text-gray-500 mb-3">
+          Calls <code>Certificates.issueCertificate(student, ipfsHash)</code> with a signer-bound contract.
+        </p>
         <div className="space-y-3">
           <input
             type="text"
@@ -301,8 +389,8 @@ export default function AcademicTestPage() {
         </div>
       </Card>
 
-      {(pageError || walletError) && (
-        <p className="text-sm text-red-700">{pageError || walletError}</p>
+      {walletError && (
+        <p className="text-sm text-red-700">{walletError}</p>
       )}
     </div>
   );

@@ -125,9 +125,24 @@ export default function IdentityPage() {
           </div>
           {admins.length > 0 ? (
             <ul className="text-sm space-y-2">
-              {admins.map((admin, idx) => (
-                <li key={idx} className="font-mono text-xs text-gray-700">{admin}</li>
-              ))}
+              {admins.map((admin, idx) => {
+                const address =
+                  typeof admin === "string"
+                    ? admin
+                    : admin.userAddress || admin[0] || "";
+
+                const email =
+                  typeof admin === "object" && admin !== null
+                    ? admin.email || admin[1] || ""
+                    : "";
+
+                return (
+                  <li key={idx} className="font-mono text-xs text-gray-700">
+                    {address}
+                    {email ? ` - ${email}` : ""}
+                  </li>
+                );
+              })}
             </ul>
           ) : (
             <p className="text-gray-400 text-sm">Click Refresh to load admins</p>
