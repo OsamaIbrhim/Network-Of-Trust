@@ -15,6 +15,12 @@
     "inputs": [
       {
         "indexed": true,
+        "internalType": "address",
+        "name": "institution",
+        "type": "address"
+      },
+      {
+        "indexed": true,
         "internalType": "string",
         "name": "courseId",
         "type": "string"
@@ -40,6 +46,12 @@
     "inputs": [
       {
         "indexed": true,
+        "internalType": "address",
+        "name": "institution",
+        "type": "address"
+      },
+      {
+        "indexed": true,
         "internalType": "string",
         "name": "courseId",
         "type": "string"
@@ -51,6 +63,12 @@
   {
     "anonymous": false,
     "inputs": [
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "institution",
+        "type": "address"
+      },
       {
         "indexed": true,
         "internalType": "string",
@@ -84,6 +102,12 @@
     "inputs": [
       {
         "indexed": true,
+        "internalType": "address",
+        "name": "institution",
+        "type": "address"
+      },
+      {
+        "indexed": true,
         "internalType": "string",
         "name": "courseId",
         "type": "string"
@@ -107,6 +131,12 @@
   {
     "anonymous": false,
     "inputs": [
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "institution",
+        "type": "address"
+      },
       {
         "indexed": true,
         "internalType": "string",
@@ -145,6 +175,12 @@
     "anonymous": false,
     "inputs": [
       {
+        "indexed": true,
+        "internalType": "address",
+        "name": "institution",
+        "type": "address"
+      },
+      {
         "indexed": false,
         "internalType": "string",
         "name": "oldSemester",
@@ -163,6 +199,12 @@
   {
     "anonymous": false,
     "inputs": [
+      {
+        "indexed": true,
+        "internalType": "address",
+        "name": "institution",
+        "type": "address"
+      },
       {
         "indexed": false,
         "internalType": "string",
@@ -295,6 +337,11 @@
   {
     "inputs": [
       {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      },
+      {
         "internalType": "string",
         "name": "",
         "type": "string"
@@ -318,6 +365,11 @@
   },
   {
     "inputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      },
       {
         "internalType": "string",
         "name": "",
@@ -363,6 +415,11 @@
   {
     "inputs": [
       {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      },
+      {
         "internalType": "string",
         "name": "",
         "type": "string"
@@ -405,7 +462,13 @@
     "type": "function"
   },
   {
-    "inputs": [],
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      }
+    ],
     "name": "currentActiveSemester",
     "outputs": [
       {
@@ -433,6 +496,11 @@
   {
     "inputs": [
       {
+        "internalType": "address",
+        "name": "",
+        "type": "address"
+      },
+      {
         "internalType": "string",
         "name": "",
         "type": "string"
@@ -456,6 +524,11 @@
   },
   {
     "inputs": [
+      {
+        "internalType": "address",
+        "name": "_institution",
+        "type": "address"
+      },
       {
         "internalType": "string",
         "name": "_courseId",
@@ -501,7 +574,13 @@
     "type": "function"
   },
   {
-    "inputs": [],
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "_institution",
+        "type": "address"
+      }
+    ],
     "name": "getAllDepartments",
     "outputs": [
       {
@@ -515,6 +594,11 @@
   },
   {
     "inputs": [
+      {
+        "internalType": "address",
+        "name": "_institution",
+        "type": "address"
+      },
       {
         "internalType": "string",
         "name": "_courseId",
@@ -560,6 +644,11 @@
   {
     "inputs": [
       {
+        "internalType": "address",
+        "name": "_institution",
+        "type": "address"
+      },
+      {
         "internalType": "string",
         "name": "_courseId",
         "type": "string"
@@ -603,6 +692,11 @@
   },
   {
     "inputs": [
+      {
+        "internalType": "address",
+        "name": "_institution",
+        "type": "address"
+      },
       {
         "internalType": "string",
         "name": "_departmentName",
@@ -655,6 +749,11 @@
   {
     "inputs": [
       {
+        "internalType": "address",
+        "name": "_institution",
+        "type": "address"
+      },
+      {
         "internalType": "string",
         "name": "_courseId",
         "type": "string"
@@ -706,6 +805,11 @@
   },
   {
     "inputs": [
+      {
+        "internalType": "address",
+        "name": "_institution",
+        "type": "address"
+      },
       {
         "internalType": "string",
         "name": "_departmentName",

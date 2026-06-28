@@ -42,7 +42,7 @@ function truncateText(text: string, length = 14) {
 }
 
 export default function InstitutionCredentialsPage() {
-  const { account, ensureReady, isConnected, connect, sendTx, txPending, error: walletError } = useWallet();
+  const { account, ensureReady, isConnected, connect, sendTx, txPending, error: walletError, getCertificate } = useWallet();
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -229,7 +229,7 @@ export default function InstitutionCredentialsPage() {
     try {
       const ready = await ensureReady();
       if (!ready) throw new Error(walletError || 'Please connect MetaMask and switch to Ganache');
-      const contract = getCertificateContractReadOnly();
+      const contract = getCertificate();
       const ipfsHash = JSON.stringify({ degree: degreeName.trim() });
       const tx = await contract.issueCertificate(studentAddress.trim(), ipfsHash);
       const receipt = await tx.wait();
