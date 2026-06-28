@@ -1,7 +1,7 @@
 const { expect } = require("chai");
 const { ethers } = require("hardhat");
 
-describe("LMS End-to-End Integration", function () {
+describe("NoT End-to-End Integration", function () {
   let identity, courseManagement, studentAcademicManager;
   let examManagement, certificates, graduationManager;
   let owner, institution, student, employer, otherInstitution;
@@ -10,6 +10,14 @@ describe("LMS End-to-End Integration", function () {
     const network = await ethers.provider.getNetwork();
     const networkName = `${network.name || "unknown"}-${network.chainId}`;
     const address = contract.target || contract.address;
+
+    // Localhost/Ganache (chain 1337) has ~6.7M default block gas limit.
+    // Hardhat network has 30M. Increase gas for localhost to prevent OOG on
+    // multi-step operations like graduation/certificate flows.
+    const isLocalhost = network.name === 'localhost' || network.chainId === 1337n;
+    const gasOverride = isLocalhost ? 6500000 : undefined;
+    const txOverrides = gasOverride ? { ...overrides, gasLimit: gasOverride } : overrides;
+
     // Debug logs to diagnose undefined method/property issues
     try {
       console.log("contract =", contract);
@@ -21,7 +29,7 @@ describe("LMS End-to-End Integration", function () {
     }
     let estimate;
     if (contract && contract.estimateGas && typeof contract.estimateGas[method] === 'function') {
-      estimate = await contract.estimateGas[method](...args, overrides);
+      estimate = await contract.estimateGas[method](...args, txOverrides);
       console.log(`[GAS] ${networkName} ${address}.${method} estimate=${estimate.toString()}`);
     } else {
       console.log(`[GAS] ${networkName} ${address}.${method} estimate=SKIPPED (estimateGas.${method} undefined)`);
@@ -31,7 +39,7 @@ describe("LMS End-to-End Integration", function () {
       throw new Error(`Contract method missing: ${method} on ${address}`);
     }
 
-    const tx = await contract[method](...args, overrides);
+    const tx = await contract[method](...args, txOverrides);
     console.log(`[GAS] ${networkName} ${address}.${method} txHash=${tx.hash}`);
     const receipt = await tx.wait();
     console.log(`[GAS] ${networkName} ${address}.${method} used=${receipt.gasUsed.toString()} receiptTx=${receipt.transactionHash}`);
@@ -195,13 +203,13 @@ describe("LMS End-to-End Integration", function () {
       await courseManagement.connect(institution).addDepartment("CS");
       await courseManagement.connect(institution).addCourse("CS101", "Intro", 3, "CS");
       await studentAcademicManager.connect(institution).enrollStudent(student.address, "CS101", "F25");
-      await studentAcademicManager.connect(institution).updateGrade(student.address, "CS101", "F25", 90, { gasLimit: 16777216 });
+      await studentAcademicManager.connect(institution).updateGrade(student.address, "CS101", "F25", 90, { gasLimit: 6500000 });
 
       // Requirements + eligibility + approval
       const deptKey = ethers.keccak256(ethers.toUtf8Bytes("CS"));
-      await graduationManager.connect(institution).setRequirements("CS", 3, 0, [], false, false, 365);
-      await graduationManager.connect(institution).checkEligibility(student.address, deptKey);
-      await graduationManager.connect(institution).approveGraduation(student.address);
+      await sendTx(graduationManager.connect(institution), "setRequirements", ["CS", 3, 0, [], false, false, 365]);
+      await sendTx(graduationManager.connect(institution), "checkEligibility", [student.address, deptKey]);
+      await sendTx(graduationManager.connect(institution), "approveGraduation", [student.address]);
     });
 
     it("Without validator: certificate issuance succeeds", async function () {
