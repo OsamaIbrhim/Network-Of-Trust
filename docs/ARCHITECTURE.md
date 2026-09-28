@@ -104,7 +104,7 @@ network-of-trust/
 |---|---|---|
 | Users, roles, sessions | PostgreSQL | |
 | Institution profile (ministry, university, faculty, logo, seal) | PostgreSQL + file storage | |
-| Institution accreditation (approved issuer) | PostgreSQL **and** chain (`ISSUER_ROLE`) | DB status drives the UI; chain role is what verifiers trust |
+| Institution accreditation and its signer wallets | PostgreSQL **and** chain (`registerInstitution`, `addSigner`, `suspendInstitution`) | DB status drives the UI; the chain is what verifiers trust |
 | Students, national ID | PostgreSQL | National ID encrypted at rest, never in credential payload |
 | Departments, programs, courses, terms, enrollments | PostgreSQL | |
 | Exams and results, statistics | PostgreSQL | Stats are SQL queries, not contract loops |
@@ -138,6 +138,8 @@ interface CredentialPayload {
 }
 ```
 
+On-chain, an institution is identified by `institutionId = keccak256(utf8(payload.institution.id))` (ADR 0002). `payload.institution.issuerAddress` records the wallet that signed at issuance time; it is informational, verification uses the institution id.
+
 Phase 4 adds optional award fields (`program`, `bylawVersion`, `earnedCredits`) for degrees. Adding optional fields is backward compatible: the hash formula below does not change, and credentials issued without them still verify.
 
 ### Hash
@@ -168,17 +170,22 @@ One contract, ~150 lines, no personal data. Source: `packages/contracts/contract
 
 | Function | Who | What |
 |---|---|---|
-| `grantRole(ISSUER_ROLE, addr)` / `revokeRole` | Platform admin (`DEFAULT_ADMIN_ROLE`) | Accredit or suspend an institution |
-| `anchorBatch(root, size)` | Issuer | Store root with issuer address and timestamp. Reverts on zero root, zero size, duplicate root |
-| `revoke(root, credentialHash, proof, reason)` | The issuer that anchored `root`, while still an issuer | Mark one credential revoked. Proof must show the hash is in that batch. Reasons: 1 issued in error, 2 fraud, 3 superseded, 4 other |
-| `verify(root, credentialHash, proof)` | Anyone, even when paused | Returns `{status: UNKNOWN / VALID / REVOKED, issuer, issuerActive, anchoredAt, revokedAt, reason}` |
+| `registerInstitution(institutionId)` | Platform admin (`DEFAULT_ADMIN_ROLE`) | Accredit an institution (stable id) |
+| `addSigner(institutionId, wallet)` / `removeSigner(wallet)` | Platform admin | Authorize or remove a wallet for that institution (onboarding, staff change, lost or stolen key). A wallet belongs to at most one institution |
+| `suspendInstitution` / `reinstateInstitution` | Platform admin | Withdraw or restore accreditation |
+| `anchorBatch(root, size)` | A signer of an active institution | Store the batch under `(institutionId, root)` with timestamp, size and signing wallet. Reverts on zero root, zero size, or the same institution anchoring the same root twice |
+| `revoke(root, credentialHash, proof, reason)` | Any current signer of the institution that anchored `root` (including batches signed by its former wallets) | Mark one credential revoked. Proof must show the hash is in that batch. Reasons: 1 issued in error, 2 fraud, 3 superseded, 4 other |
+| `verify(institutionId, root, credentialHash, proof)` | Anyone, even when paused | `institutionId` is always derived from `payload.institution.id`. Returns `{status: UNKNOWN / VALID / REVOKED, institutionActive, anchoredAt, signer, revokedAt, reason}` |
 | `pause()` / `unpause()` | Platform admin | Blocks anchor and revoke only |
 | `anchorBatchBySig(...)` / `revokeBySig(...)` | Anyone (our relayer), carrying the issuer's signature | Same effect as the direct calls, but the issuer only signs and the relayer pays gas. Added in ROADMAP Phase 6, see section 7.7 |
 
 Design decisions:
 
-- **Revocations are keyed by `(root, credentialHash)`**, not by hash alone. Otherwise institution B could put a copy of A's hash in its own batch and revoke it, killing A's credential. There is a test for this.
-- **A removed issuer's old credentials stay VALID**, with `issuerActive = false` so the verify page can show a warning. They were legitimate when issued. A removed issuer can no longer anchor or revoke, so a stolen institution key cannot mass-revoke after suspension.
+- **An institution has a stable id; wallets are replaceable signers** (ADR 0002). Staff leave, laptops get lost, keys get stolen. Rotating a wallet (`addSigner` new, `removeSigner` old) keeps every old credential VALID with `institutionActive = true`, and the new wallet can still revoke credentials signed by the old one. A removed wallet can do nothing.
+- **Batches are keyed by `(institutionId, root)`** (ADR 0001, 0002). A pending transaction is visible to everyone in the **mempool** (the queue of transactions not yet in a block). If batches were keyed by root only, institution B could copy A's root and anchor it first: A's transaction would fail and the root would belong to B. With the institution in the key, B's copy is a separate, meaningless entry. The verifier derives the institution id from the credential payload, and that payload is part of the hash, so it cannot be swapped.
+- **Revocations are keyed by `(institutionId, root, credentialHash)`**. Institution B putting a copy of A's hash in its own batch and revoking it never touches A's credential. Both attacks have tests.
+- **A suspended institution's old credentials stay VALID**, with `institutionActive = false` so the verify page can show a warning. They were legitimate when issued. A suspended institution can no longer anchor or revoke.
+- **The admin address cannot be zero, and can be handed over** (ADR 0003). The deploy rejects `address(0)`; the admin can grant `DEFAULT_ADMIN_ROLE` to a new address (for example a multisig before any real deployment) and renounce its own. A test proves the handover.
 - **Platform admin cannot revoke institution credentials.** Trust is not centralized in us.
 - Future (not v2): make `DEFAULT_ADMIN_ROLE` a multisig (several people must sign).
 
@@ -189,9 +196,11 @@ Design decisions:
 An **institution is a university**: it is the tenant and the on-chain issuer (Egyptian degrees are issued by the university). Faculties and departments live inside it.
 
 1. University registers (email + password), fills its profile, and creates its faculties and departments. Status `PENDING`.
-2. Institution admin links a wallet with SIWE (Sign-In With Ethereum: the wallet signs a message proving it owns the address). Saved as `issuerAddress`.
-3. Platform admin reviews and approves. API marks `APPROVED`; admin's browser calls `grantRole(ISSUER_ROLE, issuerAddress)`.
-4. Chain listener sees `RoleGranted` and marks the institution `ISSUER_ACTIVE`.
+2. Institution admin links a wallet with SIWE (Sign-In With Ethereum: the wallet signs a message proving it owns the address). Saved as a pending `InstitutionSigner`.
+3. Platform admin reviews and approves. API marks `APPROVED`; admin's browser calls `registerInstitution(institutionId)` then `addSigner(institutionId, wallet)`.
+4. Chain listener sees `InstitutionRegistered` and `SignerAdded` and marks the institution `ISSUER_ACTIVE` and the signer active.
+
+**Changing a wallet later** (staff change, lost or stolen key): institution admin links the new wallet with SIWE, platform admin approves, browser calls `addSigner(new)` and `removeSigner(old)` (for a stolen key, remove first). Listener updates `InstitutionSigner` from `SignerAdded` / `SignerRemoved`. Nothing already issued changes.
 
 ### 7.2 Results and graduation eligibility
 
@@ -215,7 +224,7 @@ An **institution is a university**: it is the tenant and the on-chain issuer (Eg
 
 **Eligibility engine.** Runs when a term is published and whenever a non-credit requirement changes. For each affected student it checks the student's bylaw version: total credits, every category minimum, GPA rule, non-credit requirements. Output: `GraduationCheck { status: NOT_YET | BLOCKED | ELIGIBLE, missing: readable reasons }`. `BLOCKED` means all academic conditions are met but a non-credit requirement is missing (e.g. "Military Education: pending"). The engine never issues anything by itself.
 
-**Approval queue (one button per step).** The graduation workflow (section 8) decides who acts and in which order. The person at the current step sees, per program and graduation term, e.g. "Computer Science & Pure Mathematics, Spring 2026: 212 eligible, 9 blocked". They can open any student (transcript + checks), exclude a student with a reason, then press **Approve**. When the last step (the holder of the university wallet) approves, students become `GRADUATED` and all their degrees go into **one** Merkle batch with **one** signature (flow 7.3). Blocked students move to the queue automatically as soon as the missing requirement is recorded.
+**Approval queue (one button per step).** The graduation workflow (section 8) decides who acts and in which order. The person at the current step sees, per program and graduation term, e.g. "Computer Science & Pure Mathematics, Spring 2026: 212 eligible, 9 blocked". They can open any student (transcript + checks), exclude a student with a reason, then press **Approve**. When the last step (a holder of one of the university's signer wallets) approves, students become `GRADUATED` and all their degrees go into **one** Merkle batch with **one** signature (flow 7.3). Blocked students move to the queue automatically as soon as the missing requirement is recorded.
 
 **Why this is not on-chain.** Rules, marks and eligibility get entered, corrected and recomputed all the time. Computing them in a contract is what made v1 slow and expensive (gas grew with every course, grades could not be corrected). The chain seals the **outcome** once a human approves it. The degree payload carries the program, bylaw version, earned credits and cumulative GPA, so those numbers are sealed too.
 
@@ -239,7 +248,7 @@ sequenceDiagram
   MM->>C: transaction signed by institution wallet
   R->>API: PATCH /credential-batches/:id {txHash}  (status SUBMITTED)
   C-->>L: BatchAnchored(root, issuer, size)
-  L->>DB: issuer == institution.issuerAddress ? CONFIRMED : FAILED
+  L->>DB: match (institutionId, root) to the PREPARED batch of that institution: CONFIRMED
   L->>DB: credentials ANCHORED, enqueue PDFs + student emails
 ```
 
@@ -249,7 +258,7 @@ The listener, not the browser, is the source of truth for "anchored": the browse
 
 1. Employer scans the QR or opens `/verify/{credentialId}` (or uploads a verification bundle JSON).
 2. Web fetches `{payload, salt, root, proof, contractAddress, chainId}` from `GET /public/credentials/:id`.
-3. Browser recomputes `credentialHash` with `credential-core`, then calls `verify(root, hash, proof)` through a public RPC.
+3. Browser recomputes `credentialHash` with `credential-core`, then calls `verify(keccak256(payload.institution.id), root, hash, proof)` through a public RPC.
 4. Page shows VALID / REVOKED (with reason) / UNKNOWN, issuer name (from API) and issuer address + active flag (from chain). If the recomputed hash does not match what the API claims, show "data was altered".
 
 Students can download the **verification bundle** (the JSON above). It can be verified with a static page or a 20-line script even if our platform no longer exists.
@@ -280,25 +289,25 @@ sequenceDiagram
   R->>MM: eth_signTypedData_v4 (free, no transaction)
   MM-->>R: signature
   R->>API: POST /credential-batches/:id/signature
-  API->>C: anchorBatchBySig(root, size, issuer, deadline, signature)  (relayer pays gas)
-  C->>C: recover signer == issuer, issuer has ISSUER_ROLE, nonce, deadline
-  C-->>API: BatchAnchored(root, issuer, size)
+  API->>C: anchorBatchBySig(root, size, signer, deadline, signature)  (relayer pays gas)
+  C->>C: signature valid for signer, signer's institution active, nonce, deadline
+  C-->>API: BatchAnchored(institutionId, root, signer, size)
 ```
 
 **Contract additions** (OpenZeppelin `EIP712`, `Nonces`, `SignatureChecker`):
 
-- `anchorBatchBySig(bytes32 root, uint32 size, address issuer, uint256 deadline, bytes signature)`
-- `revokeBySig(bytes32 root, bytes32 credentialHash, bytes32[] proof, uint8 reason, address issuer, uint256 deadline, bytes signature)`
+- `anchorBatchBySig(bytes32 root, uint32 size, address signer, uint256 deadline, bytes signature)`
+- `revokeBySig(bytes32 root, bytes32 credentialHash, bytes32[] proof, uint8 reason, address signer, uint256 deadline, bytes signature)`
 - Typed data: `AnchorBatch(bytes32 root,uint32 size,uint256 nonce,uint256 deadline)` and `Revoke(bytes32 root,bytes32 credentialHash,uint8 reason,uint256 nonce,uint256 deadline)`, domain name `"NoT CredentialRegistry"`, version `"1"`.
-- The batch is recorded under `issuer`, not `msg.sender`. All checks from the direct calls still apply (role, duplicate root, same-issuer revoke, pause).
-- A per-issuer nonce makes every signature single-use; `deadline` limits how long it stays valid. `SignatureChecker` also accepts smart-contract wallets (ERC-1271), so an institution can later use a multisig.
+- The batch is recorded under the signer's institution, not `msg.sender`. All checks from the direct calls still apply (active institution, duplicate root, same-institution revoke, pause).
+- A per-signer nonce makes every signature single-use; `deadline` limits how long it stays valid. `SignatureChecker` also accepts smart-contract wallets (ERC-1271), so an institution can later use a multisig.
 - Anyone may submit a valid signature. That is safe: the signature only allows exactly what the institution signed.
 - Direct `anchorBatch` / `revoke` stay available for institutions that do hold ETH.
 
 **Relayer (inside `apps/api`):**
 
 - Its own hot wallet, funded with a small ETH balance. It has **no role** in the contract: if stolen, the thief can only spend the gas balance.
-- Per-institution quota (for example max batches per day), low-balance alert, retries with the same signature (idempotent: a duplicate root reverts with `BatchAlreadyAnchored`, which the relayer treats as "already done" when the stored batch issuer matches).
+- Per-institution quota (for example max batches per day), low-balance alert, retries with the same signature (idempotent: `BatchAlreadyAnchored` means this institution already anchored this root, so the relayer marks it done).
 - Stores `gasUsed` and `effectiveGasPrice` per transaction for billing.
 
 **Legal note.** Sponsorship moves the need to hold ETH from each university to the platform operator. Options for a real deployment: an operator entity in a jurisdiction where this is allowed, or a permissioned EVM network run by the Ministry or a university consortium (for example Hyperledger Besu) where gas has no market price. The contract is plain EVM code, so it runs unchanged on either.
@@ -348,7 +357,7 @@ Example default for `GRADUATION_ISSUE` (seeded, editable by the university):
 2. Vice Dean for Education and Students approves (`graduation.approve`, faculty).
 3. Dean approves (`graduation.approve`, faculty).
 4. Vice President for Education approves (`graduation.approve`, university).
-5. Holder of the university wallet signs (`credentials.sign`, university); the batch is anchored.
+5. A holder of a university signer wallet signs (`credentials.sign`, university); the batch is anchored.
 
 Rules of the engine:
 
@@ -357,7 +366,7 @@ Rules of the engine:
 - Every action stores user, assignment, decision, comment and time (`WorkflowAction`), and is shown on the student's and the cohort's history.
 - Changing a workflow definition only affects new instances; running instances keep the version they started with.
 
-The chain never reaches the blockchain except for its final signature. Later, the university wallet can be a **multisig** (for example 2 of 3: Dean, Vice President, President), so part of the real governance is also enforced on-chain.
+The chain never reaches the blockchain except for its final signature. Later, a university signer wallet can be a **multisig** (for example 2 of 3: Dean, Vice President, President), so part of the real governance is also enforced on-chain.
 
 ### 8.3 Onboarding a university
 
@@ -447,8 +456,8 @@ Every optimization decision (cache, Redis, index, denormalization, moving work t
 
 | Layer | Metric | Budget | Source |
 |---|---|---|---|
-| Chain | `anchorBatch` gas | ≤ 55,000 regardless of batch size (measured: 51,166 for 1 credential, 51,178 for 10,000) | Measured |
-| Chain | `revoke` gas | ≤ 70,000 (measured: 55,493 at 1 credential, 66,031 at 10,000) | Measured |
+| Chain | `anchorBatch` gas | ≤ 55,000 regardless of batch size (measured: 53,740 for 1 credential, 53,752 for 10,000) | Measured |
+| Chain | `revoke` gas | ≤ 70,000 (measured: 57,938 at 1 credential, 68,476 at 10,000) | Measured |
 | Chain | `verify` | Free `view` call; proof length log2(N): 14 hashes for 10,000 credentials | Measured |
 | API | Read endpoints | p95 ≤ 200 ms at 100 concurrent users on a 2 vCPU / 4 GB server with seed data | Starting target |
 | API | Write endpoints | p95 ≤ 500 ms (heavy work is queued, not done in the request) | Starting target |
@@ -466,7 +475,7 @@ p95 means 95% of requests are at least this fast. LCP (Largest Contentful Paint)
 ### 10.2 Blockchain
 
 - One transaction per cohort (Merkle batch), never per student. Cost does not grow with batch size.
-- `Batch` is packed into **one storage slot** (address 20 bytes + uint64 8 bytes + uint32 4 bytes = 32 bytes), so anchoring is one storage write.
+- `Batch` is packed into **one storage slot** (uint64 timestamp 8 bytes + uint32 size 4 bytes + signer address 20 bytes = 32 bytes; the institution id is the mapping key), so anchoring is one storage write.
 - Custom errors instead of revert strings, `calldata` for proofs, no loops, no arrays in storage, no on-chain lists. Lists are rebuilt from **events** by the listener.
 - Verification is a `view` call: free for the verifier, no wallet needed.
 - Listener reads logs in block ranges from a saved cursor with 2 confirmations, never "one RPC call per request".
@@ -518,7 +527,8 @@ Full Prisma schema is written in the Phase 2 and 3 plans.
 - `WorkflowAction(id, instanceId, step, userId, assignmentId, decision APPROVE|REJECT, comment?, at)`
 - `OutboxEvent(id, type, version, payload jsonb, createdAt)` and `EventDelivery(eventId, handler, status PENDING|DONE|DEAD, attempts, lastError?)` for domain events, tracked per handler
 - `FeatureFlag(institutionId, feature, enabled, updatedBy, updatedAt)`
-- `Institution(id, name, nameAr, ministry, website, logoUrl, sealUrl, status PENDING|APPROVED|ISSUER_ACTIVE|SUSPENDED, issuerAddress unique?)` (a university)
+- `Institution(id, chainId bytes32 = keccak256(id), name, nameAr, ministry, website, logoUrl, sealUrl, status PENDING|APPROVED|ISSUER_ACTIVE|SUSPENDED)` (a university)
+- `InstitutionSigner(id, institutionId, address unique, status PENDING|ACTIVE|REMOVED, linkedBy, approvedBy, addedAt?, removedAt?)`
 - `Faculty(id, institutionId, name, nameAr)`, `Department(id, facultyId, name)`
 
 **Programs and bylaws**
@@ -560,7 +570,8 @@ Full Prisma schema is written in the Phase 2 and 3 plans.
 - National ID: AES-256-GCM encrypted column, key from env, shown masked.
 - Public verify endpoint returns only the credential payload (name, award, dates). Transcripts need a student share link.
 - Chain listener waits for N confirmations (2 on Sepolia) and is idempotent (re-processing the same event changes nothing).
-- Front-running: if someone else anchors our root first, the event's issuer will not match; batch goes `FAILED`, build a new tree (new salts) and retry.
+- Front-running: batches are keyed by `(institutionId, root)`, so another institution anchoring our root first changes nothing for us (ADR 0001, 0002, contract test). A batch goes `FAILED` only if its transaction reverts or is dropped; then it is rebuilt with new salts and retried.
+- Platform admin key: must be handed over to a multisig before any real (non-test) deployment (ADR 0003).
 - Relayer key: separate from the platform admin key, holds only a small gas balance, no contract role. Stored as a server secret, rotated if leaked.
 
 ## 13. Glossary
@@ -570,7 +581,8 @@ Full Prisma schema is written in the Phase 2 and 3 plans.
 - **Hash (keccak256)**: a 32-byte fingerprint of data. Change one letter, the hash changes completely.
 - **Salt**: random bytes mixed into the data before hashing so the hash cannot be guessed.
 - **Merkle tree / root / proof**: see section 5.
-- **Issuer**: an accredited institution wallet holding `ISSUER_ROLE`.
+- **Institution id (on-chain)**: `keccak256` of the institution's platform id; never changes.
+- **Signer**: a wallet authorized to anchor and revoke for one institution; can be added and removed.
 - **SIWE**: Sign-In With Ethereum (EIP-4361), proving wallet ownership by signing a message.
 - **Testnet (Sepolia)**: a public Ethereum network with free test ETH, used for demos.
 - **Multisig**: a wallet that needs several people to sign each transaction.

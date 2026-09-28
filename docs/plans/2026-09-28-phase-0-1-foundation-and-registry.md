@@ -23,10 +23,13 @@
 ## Review Focus
 
 1. **Same hash, different letter case, in one batch** (`0xAB..` and `0xab..`): must be rejected as a duplicate, otherwise two leaves describe one credential. Pinned in Task 4.
-2. **Institution B copies A's credential hash into its own batch and revokes it**: A's credential must stay VALID. Pinned in Task 6.
-3. **Suspended institution (role removed) tries to anchor or revoke**: both must fail, while its already-issued credentials stay VALID with `issuerActive = false`. Pinned in Task 6.
-4. **Arabic names and Unicode in the payload**: canonical JSON must keep them byte-for-byte so browser and server compute the same hash. Pinned in Task 2.
-5. **Batch size does not change anchoring cost**: 1 credential and 1000 credentials cost about the same gas. Pinned in Task 5.
+2. **Front-running from the mempool**: institution B sees A's pending `anchorBatch` and anchors the same root first. A's transaction must still succeed and A's credentials must verify as A's. Batches are keyed by `(institutionId, root)` (ADR 0001, 0002). Pinned in Task 6.
+3. **Institution B copies A's credential hash into its own batch and revokes it**: A's credential must stay VALID. Pinned in Task 6.
+4. **Wallet rotation** (staff change, lost or stolen key): after `addSigner(new)` + `removeSigner(old)`, old credentials stay VALID with `institutionActive = true`, the new wallet can revoke them, and the old wallet can do nothing (ADR 0002). Pinned in Task 6.
+5. **Deploying with `address(0)` as admin** would leave the contract with nobody able to accredit institutions: the constructor must revert, and admin handover to a new address must work (ADR 0003). Pinned in Task 5.
+6. **Suspended institution tries to anchor or revoke**: both must fail, while its already-issued credentials stay VALID with `institutionActive = false`. Pinned in Tasks 5 and 6.
+7. **Arabic names and Unicode in the payload**: canonical JSON must keep them byte-for-byte so browser and server compute the same hash. Pinned in Task 2.
+8. **Batch size does not change anchoring cost**: 1 credential and 1000 credentials cost about the same gas. Pinned in Task 5.
 
 ---
 
@@ -614,7 +617,7 @@ git commit -m "feat(credential-core): add Merkle batch builder and local proof c
 
 ---
 
-### Task 5: contracts package + roles, anchorBatch, pause
+### Task 5: contracts package + admin, institutions and signers, anchorBatch, pause
 
 **Files:**
 - Create: `packages/contracts/package.json`, `packages/contracts/hardhat.config.js`
@@ -623,7 +626,7 @@ git commit -m "feat(credential-core): add Merkle batch builder and local proof c
 - Modify: root `package.json` (add workspace)
 
 **Interfaces:**
-- Produces (Solidity): `ISSUER_ROLE`, `anchorBatch(bytes32 root, uint32 size)`, `getBatch(bytes32) returns (Batch{address issuer; uint64 anchoredAt; uint32 size})`, `isIssuer(address) returns (bool)`, `pause()`, `unpause()`, event `BatchAnchored(bytes32 indexed root, address indexed issuer, uint32 size)`, errors `InvalidRoot()`, `InvalidSize()`, `BatchAlreadyAnchored(bytes32 root)`. Roles via OpenZeppelin `AccessControl` (`grantRole`, `revokeRole`, `hasRole`).
+- Produces (Solidity): constructor `(address admin)` reverting `InvalidAdmin()` on zero; `registerInstitution(bytes32 institutionId)`, `suspendInstitution(bytes32)`, `reinstateInstitution(bytes32)`, `addSigner(bytes32 institutionId, address signer)`, `removeSigner(address signer)` (all `DEFAULT_ADMIN_ROLE`); `institutionState(bytes32) returns (InstitutionState{NONE, ACTIVE, SUSPENDED})`; `institutionOf(address) returns (bytes32)`; `anchorBatch(bytes32 root, uint32 size)` for signers of an active institution; `getBatch(bytes32 institutionId, bytes32 root) returns (Batch{uint64 anchoredAt; uint32 size; address signer})`; `pause()`, `unpause()`; events `InstitutionRegistered`, `InstitutionSuspended`, `InstitutionReinstated`, `SignerAdded(bytes32 indexed institutionId, address indexed signer)`, `SignerRemoved(...)`, `BatchAnchored(bytes32 indexed institutionId, bytes32 indexed root, address indexed signer, uint32 size)`; errors `InvalidAdmin`, `InvalidInstitution`, `InstitutionAlreadyRegistered`, `UnknownInstitution`, `InvalidSigner`, `SignerAlreadyAssigned`, `NotASigner`, `InstitutionNotActive`, `InvalidRoot`, `InvalidSize`, `BatchAlreadyAnchored`. On-chain institution id = `keccak256(utf8(payload.institution.id))` (ADR 0002).
 
 - [ ] **Step 1: Package files**
 
@@ -695,8 +698,9 @@ const { ethers } = require("hardhat");
 const { loadFixture, time } = require("@nomicfoundation/hardhat-toolbox/network-helpers");
 const { StandardMerkleTree } = require("@openzeppelin/merkle-tree");
 
-const Status = { UNKNOWN: 0n, VALID: 1n, REVOKED: 2n };
-const Reason = { ISSUED_IN_ERROR: 1, FRAUD: 2, SUPERSEDED: 3, OTHER: 4 };
+const State = { NONE: 0n, ACTIVE: 1n, SUSPENDED: 2n };
+const INST_A = ethers.id("institution-a-uuid");
+const INST_B = ethers.id("institution-b-uuid");
 
 function fakeHash(label) {
   return ethers.keccak256(ethers.toUtf8Bytes(label));
@@ -706,97 +710,126 @@ function buildTree(hashes) {
   return StandardMerkleTree.of(hashes.map((h) => [h]), ["bytes32"]);
 }
 
-function proofFor(tree, hash) {
-  for (const [i, v] of tree.entries()) {
-    if (v[0] === hash) return tree.getProof(i);
-  }
-  throw new Error("hash not in tree");
-}
-
 async function deployFixture() {
-  const [admin, uniA, uniB, stranger] = await ethers.getSigners();
-  const Registry = await ethers.getContractFactory("CredentialRegistry");
-  const registry = await Registry.deploy(admin.address);
-  const ISSUER_ROLE = await registry.ISSUER_ROLE();
-  await registry.connect(admin).grantRole(ISSUER_ROLE, uniA.address);
-  await registry.connect(admin).grantRole(ISSUER_ROLE, uniB.address);
+  const [admin, signerA, signerB, stranger, newSignerA, newAdmin] = await ethers.getSigners();
+  const registry = await (await ethers.getContractFactory("CredentialRegistry")).deploy(admin.address);
+  await registry.registerInstitution(INST_A);
+  await registry.registerInstitution(INST_B);
+  await registry.addSigner(INST_A, signerA.address);
+  await registry.addSigner(INST_B, signerB.address);
   const hashes = ["cred-1", "cred-2", "cred-3"].map(fakeHash);
   const tree = buildTree(hashes);
-  return { registry, admin, uniA, uniB, stranger, ISSUER_ROLE, hashes, tree };
-}
-
-async function anchoredFixture() {
-  const f = await deployFixture();
-  await f.registry.connect(f.uniA).anchorBatch(f.tree.root, f.hashes.length);
-  return f;
+  return { registry, admin, signerA, signerB, stranger, newSignerA, newAdmin, hashes, tree };
 }
 
 describe("CredentialRegistry", function () {
-  describe("issuer management", function () {
-    it("only the admin can grant ISSUER_ROLE", async function () {
-      const { registry, stranger, ISSUER_ROLE } = await loadFixture(deployFixture);
-      await expect(registry.connect(stranger).grantRole(ISSUER_ROLE, stranger.address))
+  describe("admin", function () {
+    it("rejects the zero address as admin", async function () {
+      const Registry = await ethers.getContractFactory("CredentialRegistry");
+      await expect(Registry.deploy(ethers.ZeroAddress)).to.be.revertedWithCustomError(Registry, "InvalidAdmin");
+    });
+
+    it("can be handed over to a new address (e.g. a multisig) and the old one loses control", async function () {
+      const { registry, admin, newAdmin } = await loadFixture(deployFixture);
+      const ADMIN = await registry.DEFAULT_ADMIN_ROLE();
+      await registry.connect(admin).grantRole(ADMIN, newAdmin.address);
+      await registry.connect(admin).renounceRole(ADMIN, admin.address);
+      await expect(registry.connect(admin).registerInstitution(ethers.id("x")))
+        .to.be.revertedWithCustomError(registry, "AccessControlUnauthorizedAccount");
+      await registry.connect(newAdmin).registerInstitution(ethers.id("x"));
+    });
+  });
+
+  describe("institutions and signers", function () {
+    it("only the admin can register institutions and manage signers", async function () {
+      const { registry, stranger } = await loadFixture(deployFixture);
+      await expect(registry.connect(stranger).registerInstitution(ethers.id("x")))
+        .to.be.revertedWithCustomError(registry, "AccessControlUnauthorizedAccount");
+      await expect(registry.connect(stranger).addSigner(INST_A, stranger.address))
+        .to.be.revertedWithCustomError(registry, "AccessControlUnauthorizedAccount");
+      await expect(registry.connect(stranger).suspendInstitution(INST_A))
         .to.be.revertedWithCustomError(registry, "AccessControlUnauthorizedAccount");
     });
 
-    it("isIssuer reflects grants and revocations", async function () {
-      const { registry, admin, uniA, ISSUER_ROLE } = await loadFixture(deployFixture);
-      expect(await registry.isIssuer(uniA.address)).to.equal(true);
-      await registry.connect(admin).revokeRole(ISSUER_ROLE, uniA.address);
-      expect(await registry.isIssuer(uniA.address)).to.equal(false);
+    it("rejects a zero id, a duplicate id, an unknown institution, a zero signer and a signer that already belongs somewhere", async function () {
+      const { registry, signerA, stranger } = await loadFixture(deployFixture);
+      await expect(registry.registerInstitution(ethers.ZeroHash)).to.be.revertedWithCustomError(registry, "InvalidInstitution");
+      await expect(registry.registerInstitution(INST_A))
+        .to.be.revertedWithCustomError(registry, "InstitutionAlreadyRegistered").withArgs(INST_A);
+      await expect(registry.addSigner(ethers.id("nope"), stranger.address))
+        .to.be.revertedWithCustomError(registry, "UnknownInstitution");
+      await expect(registry.addSigner(INST_A, ethers.ZeroAddress)).to.be.revertedWithCustomError(registry, "InvalidSigner");
+      await expect(registry.addSigner(INST_B, signerA.address))
+        .to.be.revertedWithCustomError(registry, "SignerAlreadyAssigned").withArgs(signerA.address);
+      await expect(registry.removeSigner(stranger.address))
+        .to.be.revertedWithCustomError(registry, "NotASigner").withArgs(stranger.address);
+    });
+
+    it("exposes state and signer mapping", async function () {
+      const { registry, signerA, stranger } = await loadFixture(deployFixture);
+      expect(await registry.institutionState(INST_A)).to.equal(State.ACTIVE);
+      expect(await registry.institutionOf(signerA.address)).to.equal(INST_A);
+      expect(await registry.institutionOf(stranger.address)).to.equal(ethers.ZeroHash);
     });
   });
 
   describe("anchorBatch", function () {
-    it("stores the batch and emits BatchAnchored", async function () {
-      const { registry, uniA, tree } = await loadFixture(deployFixture);
-      await expect(registry.connect(uniA).anchorBatch(tree.root, 3))
-        .to.emit(registry, "BatchAnchored").withArgs(tree.root, uniA.address, 3);
-      const batch = await registry.getBatch(tree.root);
-      expect(batch.issuer).to.equal(uniA.address);
+    it("stores the batch under the signer's institution and emits BatchAnchored", async function () {
+      const { registry, signerA, tree } = await loadFixture(deployFixture);
+      await expect(registry.connect(signerA).anchorBatch(tree.root, 3))
+        .to.emit(registry, "BatchAnchored").withArgs(INST_A, tree.root, signerA.address, 3);
+      const batch = await registry.getBatch(INST_A, tree.root);
       expect(batch.size).to.equal(3n);
+      expect(batch.signer).to.equal(signerA.address);
       expect(batch.anchoredAt).to.equal(BigInt(await time.latest()));
+      expect((await registry.getBatch(INST_B, tree.root)).anchoredAt).to.equal(0n);
     });
 
-    it("rejects callers without ISSUER_ROLE", async function () {
+    it("rejects wallets that are not signers", async function () {
       const { registry, stranger, tree } = await loadFixture(deployFixture);
       await expect(registry.connect(stranger).anchorBatch(tree.root, 3))
-        .to.be.revertedWithCustomError(registry, "AccessControlUnauthorizedAccount");
+        .to.be.revertedWithCustomError(registry, "NotASigner").withArgs(stranger.address);
     });
 
-    it("rejects a zero root, a zero size and a duplicate root", async function () {
-      const { registry, uniA, uniB, tree } = await loadFixture(deployFixture);
-      await expect(registry.connect(uniA).anchorBatch(ethers.ZeroHash, 1))
-        .to.be.revertedWithCustomError(registry, "InvalidRoot");
-      await expect(registry.connect(uniA).anchorBatch(tree.root, 0))
-        .to.be.revertedWithCustomError(registry, "InvalidSize");
-      await registry.connect(uniA).anchorBatch(tree.root, 3);
-      await expect(registry.connect(uniB).anchorBatch(tree.root, 3))
+    it("rejects a zero root, a zero size and the same institution anchoring a root twice", async function () {
+      const { registry, signerA, tree } = await loadFixture(deployFixture);
+      await expect(registry.connect(signerA).anchorBatch(ethers.ZeroHash, 1)).to.be.revertedWithCustomError(registry, "InvalidRoot");
+      await expect(registry.connect(signerA).anchorBatch(tree.root, 0)).to.be.revertedWithCustomError(registry, "InvalidSize");
+      await registry.connect(signerA).anchorBatch(tree.root, 3);
+      await expect(registry.connect(signerA).anchorBatch(tree.root, 3))
         .to.be.revertedWithCustomError(registry, "BatchAlreadyAnchored").withArgs(tree.root);
     });
 
     it("costs (almost) the same gas for 1 credential and for 1000 credentials", async function () {
-      const { registry, uniA } = await loadFixture(deployFixture);
+      const { registry, signerA } = await loadFixture(deployFixture);
       const small = buildTree([fakeHash("only-one")]);
       const big = buildTree(Array.from({ length: 1000 }, (_, i) => fakeHash("c" + i)));
-      const g1 = (await (await registry.connect(uniA).anchorBatch(small.root, 1)).wait()).gasUsed;
-      const g1000 = (await (await registry.connect(uniA).anchorBatch(big.root, 1000)).wait()).gasUsed;
-      // only calldata bytes differ (a few gas), storage cost is identical
+      const g1 = (await (await registry.connect(signerA).anchorBatch(small.root, 1)).wait()).gasUsed;
+      const g1000 = (await (await registry.connect(signerA).anchorBatch(big.root, 1000)).wait()).gasUsed;
       expect(Number(g1000)).to.be.closeTo(Number(g1), 100);
-      expect(Number(g1000)).to.be.lessThan(80000);
+      expect(Number(g1000)).to.be.lessThan(55000);
+    });
+  });
+
+  describe("suspension", function () {
+    it("blocks anchoring while suspended and allows it again after reinstatement", async function () {
+      const { registry, signerA } = await loadFixture(deployFixture);
+      await expect(registry.suspendInstitution(INST_A)).to.emit(registry, "InstitutionSuspended").withArgs(INST_A);
+      await expect(registry.connect(signerA).anchorBatch(fakeHash("r"), 1))
+        .to.be.revertedWithCustomError(registry, "InstitutionNotActive").withArgs(INST_A);
+      await registry.reinstateInstitution(INST_A);
+      await registry.connect(signerA).anchorBatch(fakeHash("r"), 1);
     });
   });
 
   describe("pause", function () {
     it("only the admin can pause, and pause blocks anchorBatch", async function () {
-      const { registry, admin, uniA, stranger, tree } = await loadFixture(deployFixture);
-      await expect(registry.connect(stranger).pause())
-        .to.be.revertedWithCustomError(registry, "AccessControlUnauthorizedAccount");
+      const { registry, admin, signerA, stranger, tree } = await loadFixture(deployFixture);
+      await expect(registry.connect(stranger).pause()).to.be.revertedWithCustomError(registry, "AccessControlUnauthorizedAccount");
       await registry.connect(admin).pause();
-      await expect(registry.connect(uniA).anchorBatch(tree.root, 3))
-        .to.be.revertedWithCustomError(registry, "EnforcedPause");
+      await expect(registry.connect(signerA).anchorBatch(tree.root, 3)).to.be.revertedWithCustomError(registry, "EnforcedPause");
       await registry.connect(admin).unpause();
-      await registry.connect(uniA).anchorBatch(tree.root, 3);
+      await registry.connect(signerA).anchorBatch(tree.root, 3);
     });
   });
 });
@@ -819,29 +852,52 @@ import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 
 /// @title CredentialRegistry
-/// @notice Anchors Merkle roots of credential hashes and records revocations.
-/// @dev Stores NO personal data. Only 32-byte hashes, issuer addresses and timestamps.
+/// @notice Anchors Merkle roots of credential hashes.
+/// @dev Stores NO personal data. An institution has a stable id (keccak256 of its platform id) and a set
+///      of signer wallets that can change over time (ADR 0002). Batches and revocations are keyed by
+///      institution id, so wallet rotation keeps old credentials valid and revocable, and nobody can
+///      front-run another institution's root (ADR 0001).
 contract CredentialRegistry is AccessControl, Pausable {
-    bytes32 public constant ISSUER_ROLE = keccak256("ISSUER_ROLE");
-
-    struct Batch {
-        address issuer;
-        uint64 anchoredAt;
-        uint32 size;
+    enum InstitutionState {
+        NONE,
+        ACTIVE,
+        SUSPENDED
     }
 
-    mapping(bytes32 root => Batch) private _batches;
+    struct Batch {
+        uint64 anchoredAt;
+        uint32 size;
+        address signer;
+    }
 
-    event BatchAnchored(bytes32 indexed root, address indexed issuer, uint32 size);
+    mapping(bytes32 institutionId => InstitutionState) private _institutions;
+    mapping(address signer => bytes32 institutionId) private _institutionOf;
+    mapping(bytes32 institutionId => mapping(bytes32 root => Batch)) private _batches;
 
+    event InstitutionRegistered(bytes32 indexed institutionId);
+    event InstitutionSuspended(bytes32 indexed institutionId);
+    event InstitutionReinstated(bytes32 indexed institutionId);
+    event SignerAdded(bytes32 indexed institutionId, address indexed signer);
+    event SignerRemoved(bytes32 indexed institutionId, address indexed signer);
+    event BatchAnchored(bytes32 indexed institutionId, bytes32 indexed root, address indexed signer, uint32 size);
+    error InvalidAdmin();
+    error InvalidInstitution();
+    error InstitutionAlreadyRegistered(bytes32 institutionId);
+    error UnknownInstitution(bytes32 institutionId);
+    error InvalidSigner();
+    error SignerAlreadyAssigned(address signer);
+    error NotASigner(address account);
+    error InstitutionNotActive(bytes32 institutionId);
     error InvalidRoot();
     error InvalidSize();
     error BatchAlreadyAnchored(bytes32 root);
 
     constructor(address admin) {
+        if (admin == address(0)) revert InvalidAdmin();
         _grantRole(DEFAULT_ADMIN_ROLE, admin);
     }
 
+    /// @notice Emergency stop for anchoring.
     function pause() external onlyRole(DEFAULT_ADMIN_ROLE) {
         _pause();
     }
@@ -850,22 +906,71 @@ contract CredentialRegistry is AccessControl, Pausable {
         _unpause();
     }
 
-    /// @notice Anchor one batch (1..N credentials) with a single transaction.
-    function anchorBatch(bytes32 root, uint32 size) external onlyRole(ISSUER_ROLE) whenNotPaused {
+    /// @notice Accredit an institution. `institutionId` = keccak256 of its platform id.
+    function registerInstitution(bytes32 institutionId) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (institutionId == bytes32(0)) revert InvalidInstitution();
+        if (_institutions[institutionId] != InstitutionState.NONE) revert InstitutionAlreadyRegistered(institutionId);
+        _institutions[institutionId] = InstitutionState.ACTIVE;
+        emit InstitutionRegistered(institutionId);
+    }
+
+    /// @notice Withdraw accreditation: no new batches or revocations; old credentials stay VALID with a warning.
+    function suspendInstitution(bytes32 institutionId) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (_institutions[institutionId] != InstitutionState.ACTIVE) revert InstitutionNotActive(institutionId);
+        _institutions[institutionId] = InstitutionState.SUSPENDED;
+        emit InstitutionSuspended(institutionId);
+    }
+
+    function reinstateInstitution(bytes32 institutionId) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (_institutions[institutionId] != InstitutionState.SUSPENDED) revert UnknownInstitution(institutionId);
+        _institutions[institutionId] = InstitutionState.ACTIVE;
+        emit InstitutionReinstated(institutionId);
+    }
+
+    /// @notice Authorize a wallet to sign for an institution. A wallet belongs to at most one institution.
+    function addSigner(bytes32 institutionId, address signer) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (_institutions[institutionId] == InstitutionState.NONE) revert UnknownInstitution(institutionId);
+        if (signer == address(0)) revert InvalidSigner();
+        if (_institutionOf[signer] != bytes32(0)) revert SignerAlreadyAssigned(signer);
+        _institutionOf[signer] = institutionId;
+        emit SignerAdded(institutionId, signer);
+    }
+
+    /// @notice Remove a wallet (staff change, lost or stolen key). Past batches are unaffected.
+    function removeSigner(address signer) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        bytes32 institutionId = _institutionOf[signer];
+        if (institutionId == bytes32(0)) revert NotASigner(signer);
+        delete _institutionOf[signer];
+        emit SignerRemoved(institutionId, signer);
+    }
+
+    /// @notice Anchor one batch (1..N credentials) for the caller's institution with a single transaction.
+    function anchorBatch(bytes32 root, uint32 size) external whenNotPaused {
+        bytes32 institutionId = _activeInstitutionOf(msg.sender);
         if (root == bytes32(0)) revert InvalidRoot();
         if (size == 0) revert InvalidSize();
-        if (_batches[root].issuer != address(0)) revert BatchAlreadyAnchored(root);
+        if (_batches[institutionId][root].anchoredAt != 0) revert BatchAlreadyAnchored(root);
 
-        _batches[root] = Batch({issuer: msg.sender, anchoredAt: uint64(block.timestamp), size: size});
-        emit BatchAnchored(root, msg.sender, size);
+        _batches[institutionId][root] = Batch({anchoredAt: uint64(block.timestamp), size: size, signer: msg.sender});
+        emit BatchAnchored(institutionId, root, msg.sender, size);
     }
 
-    function getBatch(bytes32 root) external view returns (Batch memory) {
-        return _batches[root];
+    function institutionState(bytes32 institutionId) external view returns (InstitutionState) {
+        return _institutions[institutionId];
     }
 
-    function isIssuer(address account) external view returns (bool) {
-        return hasRole(ISSUER_ROLE, account);
+    function institutionOf(address signer) external view returns (bytes32) {
+        return _institutionOf[signer];
+    }
+
+    function getBatch(bytes32 institutionId, bytes32 root) external view returns (Batch memory) {
+        return _batches[institutionId][root];
+    }
+
+    function _activeInstitutionOf(address signer) private view returns (bytes32 institutionId) {
+        institutionId = _institutionOf[signer];
+        if (institutionId == bytes32(0)) revert NotASigner(signer);
+        if (_institutions[institutionId] != InstitutionState.ACTIVE) revert InstitutionNotActive(institutionId);
     }
 }
 ```
@@ -873,18 +978,20 @@ contract CredentialRegistry is AccessControl, Pausable {
 - [ ] **Step 5: Run to see it pass**
 
 Run: `npm test -w @not/contracts`
-Expected: `7 passing`
+Expected: `11 passing`
 
 - [ ] **Step 6: Commit**
 
 ```bash
 git add package.json package-lock.json packages/contracts
-git commit -m "feat(contracts): add CredentialRegistry with issuer roles, anchorBatch and pause"
+git commit -m "feat(contracts): add CredentialRegistry with institutions, signers, anchorBatch and pause"
 ```
 
 ---
 
 ### Task 6: verify and revoke
+
+Batches and revocations are keyed by `(institutionId, root)`, so nobody can block or hijack another institution's batch by anchoring its root first (ADR 0001), and a university can change wallets without losing the ability to revoke old credentials (ADR 0002). If Task 5 was already committed with an older contract shape, this task's full-file replacement of the contract and the test file replaces it too.
 
 **Files:**
 - Modify: `packages/contracts/contracts/CredentialRegistry.sol` (final version)
@@ -892,7 +999,7 @@ git commit -m "feat(contracts): add CredentialRegistry with issuer roles, anchor
 
 **Interfaces:**
 - Consumes: everything from Task 5.
-- Produces (Solidity): `enum Status { UNKNOWN, VALID, REVOKED }`, `verify(bytes32 root, bytes32 credentialHash, bytes32[] proof) returns (VerificationResult{Status status; address issuer; bool issuerActive; uint64 anchoredAt; uint64 revokedAt; uint8 reason})`, `revoke(bytes32 root, bytes32 credentialHash, bytes32[] proof, uint8 reason)`, `leafOf(bytes32) returns (bytes32)`, event `CredentialRevoked(bytes32 indexed root, bytes32 indexed credentialHash, address indexed issuer, uint8 reason)`, errors `InvalidReason()`, `UnknownBatch(bytes32)`, `NotBatchIssuer()`, `NotInBatch()`, `AlreadyRevoked()`. Reason codes: 1 issued in error, 2 fraud, 3 superseded, 4 other.
+- Produces (Solidity): `enum Status { UNKNOWN, VALID, REVOKED }`, `verify(bytes32 institutionId, bytes32 root, bytes32 credentialHash, bytes32[] proof) returns (VerificationResult{Status status; bool institutionActive; uint64 anchoredAt; address signer; uint64 revokedAt; uint8 reason})` where `institutionId` is always derived from `payload.institution.id`, `revoke(bytes32 root, bytes32 credentialHash, bytes32[] proof, uint8 reason)` for any current signer of the institution that anchored the root, `leafOf(bytes32) returns (bytes32)`, event `CredentialRevoked(bytes32 indexed institutionId, bytes32 indexed root, bytes32 indexed credentialHash, address signer, uint8 reason)`, errors `InvalidReason()`, `UnknownBatch(bytes32)`, `NotInBatch()`, `AlreadyRevoked()`. Reason codes: 1 issued in error, 2 fraud, 3 superseded, 4 other.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -905,7 +1012,10 @@ const { loadFixture, time } = require("@nomicfoundation/hardhat-toolbox/network-
 const { StandardMerkleTree } = require("@openzeppelin/merkle-tree");
 
 const Status = { UNKNOWN: 0n, VALID: 1n, REVOKED: 2n };
+const State = { NONE: 0n, ACTIVE: 1n, SUSPENDED: 2n };
 const Reason = { ISSUED_IN_ERROR: 1, FRAUD: 2, SUPERSEDED: 3, OTHER: 4 };
+const INST_A = ethers.id("institution-a-uuid");
+const INST_B = ethers.id("institution-b-uuid");
 
 function fakeHash(label) {
   return ethers.keccak256(ethers.toUtf8Bytes(label));
@@ -923,187 +1033,244 @@ function proofFor(tree, hash) {
 }
 
 async function deployFixture() {
-  const [admin, uniA, uniB, stranger] = await ethers.getSigners();
-  const Registry = await ethers.getContractFactory("CredentialRegistry");
-  const registry = await Registry.deploy(admin.address);
-  const ISSUER_ROLE = await registry.ISSUER_ROLE();
-  await registry.connect(admin).grantRole(ISSUER_ROLE, uniA.address);
-  await registry.connect(admin).grantRole(ISSUER_ROLE, uniB.address);
+  const [admin, signerA, signerB, stranger, newSignerA, newAdmin] = await ethers.getSigners();
+  const registry = await (await ethers.getContractFactory("CredentialRegistry")).deploy(admin.address);
+  await registry.registerInstitution(INST_A);
+  await registry.registerInstitution(INST_B);
+  await registry.addSigner(INST_A, signerA.address);
+  await registry.addSigner(INST_B, signerB.address);
   const hashes = ["cred-1", "cred-2", "cred-3"].map(fakeHash);
   const tree = buildTree(hashes);
-  return { registry, admin, uniA, uniB, stranger, ISSUER_ROLE, hashes, tree };
+  return { registry, admin, signerA, signerB, stranger, newSignerA, newAdmin, hashes, tree };
 }
 
 async function anchoredFixture() {
   const f = await deployFixture();
-  await f.registry.connect(f.uniA).anchorBatch(f.tree.root, f.hashes.length);
+  await f.registry.connect(f.signerA).anchorBatch(f.tree.root, f.hashes.length);
   return f;
 }
 
 describe("CredentialRegistry", function () {
-  describe("issuer management", function () {
-    it("only the admin can grant ISSUER_ROLE", async function () {
-      const { registry, stranger, ISSUER_ROLE } = await loadFixture(deployFixture);
-      await expect(registry.connect(stranger).grantRole(ISSUER_ROLE, stranger.address))
+  describe("admin", function () {
+    it("rejects the zero address as admin", async function () {
+      const Registry = await ethers.getContractFactory("CredentialRegistry");
+      await expect(Registry.deploy(ethers.ZeroAddress)).to.be.revertedWithCustomError(Registry, "InvalidAdmin");
+    });
+
+    it("can be handed over to a new address (e.g. a multisig) and the old one loses control", async function () {
+      const { registry, admin, newAdmin } = await loadFixture(deployFixture);
+      const ADMIN = await registry.DEFAULT_ADMIN_ROLE();
+      await registry.connect(admin).grantRole(ADMIN, newAdmin.address);
+      await registry.connect(admin).renounceRole(ADMIN, admin.address);
+      await expect(registry.connect(admin).registerInstitution(ethers.id("x")))
+        .to.be.revertedWithCustomError(registry, "AccessControlUnauthorizedAccount");
+      await registry.connect(newAdmin).registerInstitution(ethers.id("x"));
+    });
+  });
+
+  describe("institutions and signers", function () {
+    it("only the admin can register institutions and manage signers", async function () {
+      const { registry, stranger } = await loadFixture(deployFixture);
+      await expect(registry.connect(stranger).registerInstitution(ethers.id("x")))
+        .to.be.revertedWithCustomError(registry, "AccessControlUnauthorizedAccount");
+      await expect(registry.connect(stranger).addSigner(INST_A, stranger.address))
+        .to.be.revertedWithCustomError(registry, "AccessControlUnauthorizedAccount");
+      await expect(registry.connect(stranger).suspendInstitution(INST_A))
         .to.be.revertedWithCustomError(registry, "AccessControlUnauthorizedAccount");
     });
 
-    it("isIssuer reflects grants and revocations", async function () {
-      const { registry, admin, uniA, ISSUER_ROLE } = await loadFixture(deployFixture);
-      expect(await registry.isIssuer(uniA.address)).to.equal(true);
-      await registry.connect(admin).revokeRole(ISSUER_ROLE, uniA.address);
-      expect(await registry.isIssuer(uniA.address)).to.equal(false);
+    it("rejects a zero id, a duplicate id, an unknown institution, a zero signer and a signer that already belongs somewhere", async function () {
+      const { registry, signerA, stranger } = await loadFixture(deployFixture);
+      await expect(registry.registerInstitution(ethers.ZeroHash)).to.be.revertedWithCustomError(registry, "InvalidInstitution");
+      await expect(registry.registerInstitution(INST_A))
+        .to.be.revertedWithCustomError(registry, "InstitutionAlreadyRegistered").withArgs(INST_A);
+      await expect(registry.addSigner(ethers.id("nope"), stranger.address))
+        .to.be.revertedWithCustomError(registry, "UnknownInstitution");
+      await expect(registry.addSigner(INST_A, ethers.ZeroAddress)).to.be.revertedWithCustomError(registry, "InvalidSigner");
+      await expect(registry.addSigner(INST_B, signerA.address))
+        .to.be.revertedWithCustomError(registry, "SignerAlreadyAssigned").withArgs(signerA.address);
+      await expect(registry.removeSigner(stranger.address))
+        .to.be.revertedWithCustomError(registry, "NotASigner").withArgs(stranger.address);
+    });
+
+    it("exposes state and signer mapping", async function () {
+      const { registry, signerA, stranger } = await loadFixture(deployFixture);
+      expect(await registry.institutionState(INST_A)).to.equal(State.ACTIVE);
+      expect(await registry.institutionOf(signerA.address)).to.equal(INST_A);
+      expect(await registry.institutionOf(stranger.address)).to.equal(ethers.ZeroHash);
     });
   });
 
   describe("anchorBatch", function () {
-    it("stores the batch and emits BatchAnchored", async function () {
-      const { registry, uniA, tree } = await loadFixture(deployFixture);
-      await expect(registry.connect(uniA).anchorBatch(tree.root, 3))
-        .to.emit(registry, "BatchAnchored").withArgs(tree.root, uniA.address, 3);
-      const batch = await registry.getBatch(tree.root);
-      expect(batch.issuer).to.equal(uniA.address);
+    it("stores the batch under the signer's institution and emits BatchAnchored", async function () {
+      const { registry, signerA, tree } = await loadFixture(deployFixture);
+      await expect(registry.connect(signerA).anchorBatch(tree.root, 3))
+        .to.emit(registry, "BatchAnchored").withArgs(INST_A, tree.root, signerA.address, 3);
+      const batch = await registry.getBatch(INST_A, tree.root);
       expect(batch.size).to.equal(3n);
+      expect(batch.signer).to.equal(signerA.address);
       expect(batch.anchoredAt).to.equal(BigInt(await time.latest()));
+      expect((await registry.getBatch(INST_B, tree.root)).anchoredAt).to.equal(0n);
     });
 
-    it("rejects callers without ISSUER_ROLE", async function () {
+    it("rejects wallets that are not signers", async function () {
       const { registry, stranger, tree } = await loadFixture(deployFixture);
       await expect(registry.connect(stranger).anchorBatch(tree.root, 3))
-        .to.be.revertedWithCustomError(registry, "AccessControlUnauthorizedAccount");
+        .to.be.revertedWithCustomError(registry, "NotASigner").withArgs(stranger.address);
     });
 
-    it("rejects a zero root, a zero size and a duplicate root", async function () {
-      const { registry, uniA, uniB, tree } = await loadFixture(deployFixture);
-      await expect(registry.connect(uniA).anchorBatch(ethers.ZeroHash, 1))
-        .to.be.revertedWithCustomError(registry, "InvalidRoot");
-      await expect(registry.connect(uniA).anchorBatch(tree.root, 0))
-        .to.be.revertedWithCustomError(registry, "InvalidSize");
-      await registry.connect(uniA).anchorBatch(tree.root, 3);
-      await expect(registry.connect(uniB).anchorBatch(tree.root, 3))
+    it("rejects a zero root, a zero size and the same institution anchoring a root twice", async function () {
+      const { registry, signerA, tree } = await loadFixture(deployFixture);
+      await expect(registry.connect(signerA).anchorBatch(ethers.ZeroHash, 1)).to.be.revertedWithCustomError(registry, "InvalidRoot");
+      await expect(registry.connect(signerA).anchorBatch(tree.root, 0)).to.be.revertedWithCustomError(registry, "InvalidSize");
+      await registry.connect(signerA).anchorBatch(tree.root, 3);
+      await expect(registry.connect(signerA).anchorBatch(tree.root, 3))
         .to.be.revertedWithCustomError(registry, "BatchAlreadyAnchored").withArgs(tree.root);
     });
 
+    it("front-running: another institution anchoring the same root first does not block or hijack it", async function () {
+      const { registry, signerA, signerB, hashes, tree } = await loadFixture(deployFixture);
+      await registry.connect(signerB).anchorBatch(tree.root, 3);
+      await expect(registry.connect(signerA).anchorBatch(tree.root, 3))
+        .to.emit(registry, "BatchAnchored").withArgs(INST_A, tree.root, signerA.address, 3);
+      await registry.connect(signerB).revoke(tree.root, hashes[0], proofFor(tree, hashes[0]), Reason.FRAUD);
+      expect((await registry.verify(INST_A, tree.root, hashes[0], proofFor(tree, hashes[0]))).status).to.equal(Status.VALID);
+    });
+
     it("costs (almost) the same gas for 1 credential and for 1000 credentials", async function () {
-      const { registry, uniA } = await loadFixture(deployFixture);
+      const { registry, signerA } = await loadFixture(deployFixture);
       const small = buildTree([fakeHash("only-one")]);
       const big = buildTree(Array.from({ length: 1000 }, (_, i) => fakeHash("c" + i)));
-      const g1 = (await (await registry.connect(uniA).anchorBatch(small.root, 1)).wait()).gasUsed;
-      const g1000 = (await (await registry.connect(uniA).anchorBatch(big.root, 1000)).wait()).gasUsed;
-      // only calldata bytes differ (a few gas), storage cost is identical
+      const g1 = (await (await registry.connect(signerA).anchorBatch(small.root, 1)).wait()).gasUsed;
+      const g1000 = (await (await registry.connect(signerA).anchorBatch(big.root, 1000)).wait()).gasUsed;
       expect(Number(g1000)).to.be.closeTo(Number(g1), 100);
-      expect(Number(g1000)).to.be.lessThan(80000);
+      expect(Number(g1000)).to.be.lessThan(55000);
     });
   });
 
   describe("verify", function () {
-    it("returns VALID for every credential in an anchored batch", async function () {
-      const { registry, uniA, hashes, tree } = await loadFixture(anchoredFixture);
+    it("returns VALID with the signer for every credential in an anchored batch", async function () {
+      const { registry, signerA, hashes, tree } = await loadFixture(anchoredFixture);
       for (const h of hashes) {
-        const r = await registry.verify(tree.root, h, proofFor(tree, h));
+        const r = await registry.verify(INST_A, tree.root, h, proofFor(tree, h));
         expect(r.status).to.equal(Status.VALID);
-        expect(r.issuer).to.equal(uniA.address);
-        expect(r.issuerActive).to.equal(true);
+        expect(r.institutionActive).to.equal(true);
+        expect(r.signer).to.equal(signerA.address);
       }
     });
 
+    it("returns UNKNOWN when asked about the wrong institution", async function () {
+      const { registry, hashes, tree } = await loadFixture(anchoredFixture);
+      expect((await registry.verify(INST_B, tree.root, hashes[0], proofFor(tree, hashes[0]))).status).to.equal(Status.UNKNOWN);
+    });
+
     it("works for a batch with a single credential (empty proof)", async function () {
-      const { registry, uniA } = await loadFixture(deployFixture);
+      const { registry, signerA } = await loadFixture(deployFixture);
       const h = fakeHash("solo");
       const tree = buildTree([h]);
-      await registry.connect(uniA).anchorBatch(tree.root, 1);
+      await registry.connect(signerA).anchorBatch(tree.root, 1);
       expect(proofFor(tree, h)).to.deep.equal([]);
-      expect((await registry.verify(tree.root, h, [])).status).to.equal(Status.VALID);
+      expect((await registry.verify(INST_A, tree.root, h, [])).status).to.equal(Status.VALID);
     });
 
-    it("returns UNKNOWN for a hash that is not in the batch", async function () {
+    it("returns UNKNOWN for a hash that is not in the batch and for a root that was never anchored", async function () {
       const { registry, tree, hashes } = await loadFixture(anchoredFixture);
-      const r = await registry.verify(tree.root, fakeHash("forged"), proofFor(tree, hashes[0]));
-      expect(r.status).to.equal(Status.UNKNOWN);
-      expect(r.issuer).to.equal(ethers.ZeroAddress);
-    });
-
-    it("returns UNKNOWN for a root that was never anchored", async function () {
-      const { registry, hashes } = await loadFixture(deployFixture);
-      const other = buildTree(hashes);
-      expect((await registry.verify(other.root, hashes[0], proofFor(other, hashes[0]))).status)
-        .to.equal(Status.UNKNOWN);
+      expect((await registry.verify(INST_A, tree.root, fakeHash("forged"), proofFor(tree, hashes[0]))).status).to.equal(Status.UNKNOWN);
+      const other = buildTree([hashes[0], fakeHash("z")]);
+      expect((await registry.verify(INST_A, other.root, hashes[0], proofFor(other, hashes[0]))).status).to.equal(Status.UNKNOWN);
     });
   });
 
   describe("revoke", function () {
-    it("lets the batch issuer revoke with a reason", async function () {
-      const { registry, uniA, hashes, tree } = await loadFixture(anchoredFixture);
+    it("lets a signer of the institution revoke with a reason", async function () {
+      const { registry, signerA, hashes, tree } = await loadFixture(anchoredFixture);
       const h = hashes[1];
-      await expect(registry.connect(uniA).revoke(tree.root, h, proofFor(tree, h), Reason.FRAUD))
-        .to.emit(registry, "CredentialRevoked").withArgs(tree.root, h, uniA.address, Reason.FRAUD);
-      const r = await registry.verify(tree.root, h, proofFor(tree, h));
+      await expect(registry.connect(signerA).revoke(tree.root, h, proofFor(tree, h), Reason.FRAUD))
+        .to.emit(registry, "CredentialRevoked").withArgs(INST_A, tree.root, h, signerA.address, Reason.FRAUD);
+      const r = await registry.verify(INST_A, tree.root, h, proofFor(tree, h));
       expect(r.status).to.equal(Status.REVOKED);
       expect(r.reason).to.equal(BigInt(Reason.FRAUD));
       expect(r.revokedAt).to.equal(BigInt(await time.latest()));
-      // the other credentials in the batch stay valid
-      expect((await registry.verify(tree.root, hashes[0], proofFor(tree, hashes[0]))).status)
-        .to.equal(Status.VALID);
+      expect((await registry.verify(INST_A, tree.root, hashes[0], proofFor(tree, hashes[0]))).status).to.equal(Status.VALID);
     });
 
-    it("rejects another institution revoking a credential it did not issue", async function () {
-      const { registry, uniB, hashes, tree } = await loadFixture(anchoredFixture);
-      await expect(registry.connect(uniB).revoke(tree.root, hashes[0], proofFor(tree, hashes[0]), Reason.OTHER))
-        .to.be.revertedWithCustomError(registry, "NotBatchIssuer");
+    it("rejects another institution revoking a batch it did not anchor", async function () {
+      const { registry, signerB, hashes, tree } = await loadFixture(anchoredFixture);
+      await expect(registry.connect(signerB).revoke(tree.root, hashes[0], proofFor(tree, hashes[0]), Reason.OTHER))
+        .to.be.revertedWithCustomError(registry, "UnknownBatch").withArgs(tree.root);
     });
 
     it("a copied hash in another institution's batch cannot revoke the original", async function () {
-      const { registry, uniB, hashes, tree } = await loadFixture(anchoredFixture);
-      const copy = buildTree([hashes[0], fakeHash("uniB-own")]);
-      await registry.connect(uniB).anchorBatch(copy.root, 2);
-      await registry.connect(uniB).revoke(copy.root, hashes[0], proofFor(copy, hashes[0]), Reason.FRAUD);
-      expect((await registry.verify(tree.root, hashes[0], proofFor(tree, hashes[0]))).status)
-        .to.equal(Status.VALID);
+      const { registry, signerB, hashes, tree } = await loadFixture(anchoredFixture);
+      const copy = buildTree([hashes[0], fakeHash("b-own")]);
+      await registry.connect(signerB).anchorBatch(copy.root, 2);
+      await registry.connect(signerB).revoke(copy.root, hashes[0], proofFor(copy, hashes[0]), Reason.FRAUD);
+      expect((await registry.verify(INST_A, tree.root, hashes[0], proofFor(tree, hashes[0]))).status).to.equal(Status.VALID);
     });
 
     it("rejects hashes outside the batch, reason 0, unknown roots and double revocation", async function () {
-      const { registry, uniA, hashes, tree } = await loadFixture(anchoredFixture);
+      const { registry, signerA, hashes, tree } = await loadFixture(anchoredFixture);
       const p = proofFor(tree, hashes[0]);
-      await expect(registry.connect(uniA).revoke(tree.root, fakeHash("x"), p, Reason.OTHER))
-        .to.be.revertedWithCustomError(registry, "NotInBatch");
-      await expect(registry.connect(uniA).revoke(tree.root, hashes[0], p, 0))
-        .to.be.revertedWithCustomError(registry, "InvalidReason");
-      await expect(registry.connect(uniA).revoke(fakeHash("no-root"), hashes[0], p, Reason.OTHER))
-        .to.be.revertedWithCustomError(registry, "UnknownBatch");
-      await registry.connect(uniA).revoke(tree.root, hashes[0], p, Reason.OTHER);
-      await expect(registry.connect(uniA).revoke(tree.root, hashes[0], p, Reason.OTHER))
-        .to.be.revertedWithCustomError(registry, "AlreadyRevoked");
+      await expect(registry.connect(signerA).revoke(tree.root, fakeHash("x"), p, Reason.OTHER)).to.be.revertedWithCustomError(registry, "NotInBatch");
+      await expect(registry.connect(signerA).revoke(tree.root, hashes[0], p, 0)).to.be.revertedWithCustomError(registry, "InvalidReason");
+      await expect(registry.connect(signerA).revoke(fakeHash("no-root"), hashes[0], p, Reason.OTHER)).to.be.revertedWithCustomError(registry, "UnknownBatch");
+      await registry.connect(signerA).revoke(tree.root, hashes[0], p, Reason.OTHER);
+      await expect(registry.connect(signerA).revoke(tree.root, hashes[0], p, Reason.OTHER)).to.be.revertedWithCustomError(registry, "AlreadyRevoked");
     });
   });
 
-  describe("removed issuer", function () {
-    it("keeps old credentials VALID, flags issuerActive=false, and blocks new actions", async function () {
-      const { registry, admin, uniA, ISSUER_ROLE, hashes, tree } = await loadFixture(anchoredFixture);
-      await registry.connect(admin).revokeRole(ISSUER_ROLE, uniA.address);
-      const r = await registry.verify(tree.root, hashes[0], proofFor(tree, hashes[0]));
+  describe("wallet rotation", function () {
+    it("keeps old credentials VALID and lets the new wallet revoke batches signed by the old one", async function () {
+      const { registry, signerA, newSignerA, hashes, tree } = await loadFixture(anchoredFixture);
+      await registry.addSigner(INST_A, newSignerA.address);
+      await expect(registry.removeSigner(signerA.address)).to.emit(registry, "SignerRemoved").withArgs(INST_A, signerA.address);
+
+      const before = await registry.verify(INST_A, tree.root, hashes[0], proofFor(tree, hashes[0]));
+      expect(before.status).to.equal(Status.VALID);
+      expect(before.institutionActive).to.equal(true);
+      expect(before.signer).to.equal(signerA.address);
+
+      await registry.connect(newSignerA).revoke(tree.root, hashes[0], proofFor(tree, hashes[0]), Reason.SUPERSEDED);
+      expect((await registry.verify(INST_A, tree.root, hashes[0], proofFor(tree, hashes[0]))).status).to.equal(Status.REVOKED);
+    });
+
+    it("a removed (e.g. stolen) wallet can no longer anchor or revoke", async function () {
+      const { registry, signerA, hashes, tree } = await loadFixture(anchoredFixture);
+      await registry.removeSigner(signerA.address);
+      await expect(registry.connect(signerA).anchorBatch(fakeHash("new-root"), 1))
+        .to.be.revertedWithCustomError(registry, "NotASigner").withArgs(signerA.address);
+      await expect(registry.connect(signerA).revoke(tree.root, hashes[0], proofFor(tree, hashes[0]), Reason.FRAUD))
+        .to.be.revertedWithCustomError(registry, "NotASigner");
+    });
+  });
+
+  describe("suspension", function () {
+    it("keeps old credentials VALID with institutionActive=false, blocks new actions, and can be reinstated", async function () {
+      const { registry, signerA, hashes, tree } = await loadFixture(anchoredFixture);
+      await expect(registry.suspendInstitution(INST_A)).to.emit(registry, "InstitutionSuspended").withArgs(INST_A);
+      const r = await registry.verify(INST_A, tree.root, hashes[0], proofFor(tree, hashes[0]));
       expect(r.status).to.equal(Status.VALID);
-      expect(r.issuerActive).to.equal(false);
-      await expect(registry.connect(uniA).anchorBatch(fakeHash("new-root"), 1))
-        .to.be.revertedWithCustomError(registry, "AccessControlUnauthorizedAccount");
-      await expect(registry.connect(uniA).revoke(tree.root, hashes[0], proofFor(tree, hashes[0]), Reason.OTHER))
-        .to.be.revertedWithCustomError(registry, "AccessControlUnauthorizedAccount");
+      expect(r.institutionActive).to.equal(false);
+      await expect(registry.connect(signerA).anchorBatch(fakeHash("new-root"), 1))
+        .to.be.revertedWithCustomError(registry, "InstitutionNotActive").withArgs(INST_A);
+      await expect(registry.connect(signerA).revoke(tree.root, hashes[0], proofFor(tree, hashes[0]), Reason.OTHER))
+        .to.be.revertedWithCustomError(registry, "InstitutionNotActive");
+      await registry.reinstateInstitution(INST_A);
+      await registry.connect(signerA).anchorBatch(fakeHash("new-root"), 1);
     });
   });
 
   describe("pause", function () {
     it("blocks writes but never blocks verification", async function () {
-      const { registry, admin, uniA, stranger, hashes, tree } = await loadFixture(anchoredFixture);
-      await expect(registry.connect(stranger).pause())
-        .to.be.revertedWithCustomError(registry, "AccessControlUnauthorizedAccount");
+      const { registry, admin, signerA, stranger, hashes, tree } = await loadFixture(anchoredFixture);
+      await expect(registry.connect(stranger).pause()).to.be.revertedWithCustomError(registry, "AccessControlUnauthorizedAccount");
       await registry.connect(admin).pause();
-      await expect(registry.connect(uniA).anchorBatch(fakeHash("r2"), 1))
+      await expect(registry.connect(signerA).anchorBatch(fakeHash("r2"), 1)).to.be.revertedWithCustomError(registry, "EnforcedPause");
+      await expect(registry.connect(signerA).revoke(tree.root, hashes[0], proofFor(tree, hashes[0]), Reason.OTHER))
         .to.be.revertedWithCustomError(registry, "EnforcedPause");
-      await expect(registry.connect(uniA).revoke(tree.root, hashes[0], proofFor(tree, hashes[0]), Reason.OTHER))
-        .to.be.revertedWithCustomError(registry, "EnforcedPause");
-      expect((await registry.verify(tree.root, hashes[0], proofFor(tree, hashes[0]))).status)
-        .to.equal(Status.VALID);
+      expect((await registry.verify(INST_A, tree.root, hashes[0], proofFor(tree, hashes[0]))).status).to.equal(Status.VALID);
       await registry.connect(admin).unpause();
-      await registry.connect(uniA).anchorBatch(fakeHash("r2"), 1);
+      await registry.connect(signerA).anchorBatch(fakeHash("r2"), 1);
     });
   });
 });
@@ -1112,7 +1279,7 @@ describe("CredentialRegistry", function () {
 - [ ] **Step 2: Run to see it fail**
 
 Run: `npm test -w @not/contracts`
-Expected: `6 passing`, `10 failing` (`registry.verify is not a function`, `registry.revoke is not a function`).
+Expected: `9 passing`, `13 failing` (`registry.verify is not a function`, `registry.revoke is not a function`).
 
 - [ ] **Step 3: Implement**
 
@@ -1128,11 +1295,18 @@ import {MerkleProof} from "@openzeppelin/contracts/utils/cryptography/MerkleProo
 
 /// @title CredentialRegistry
 /// @notice Anchors Merkle roots of credential hashes and records revocations.
-/// @dev Stores NO personal data. Only 32-byte hashes, issuer addresses and timestamps.
+/// @dev Stores NO personal data. An institution has a stable id (keccak256 of its platform id) and a set
+///      of signer wallets that can change over time (ADR 0002). Batches and revocations are keyed by
+///      institution id, so wallet rotation keeps old credentials valid and revocable, and nobody can
+///      front-run another institution's root (ADR 0001).
 ///      Leaf format matches the OpenZeppelin merkle-tree JS library (StandardMerkleTree, ["bytes32"]):
 ///      leaf = keccak256(bytes.concat(keccak256(abi.encode(credentialHash))))
 contract CredentialRegistry is AccessControl, Pausable {
-    bytes32 public constant ISSUER_ROLE = keccak256("ISSUER_ROLE");
+    enum InstitutionState {
+        NONE,
+        ACTIVE,
+        SUSPENDED
+    }
 
     enum Status {
         UNKNOWN,
@@ -1141,52 +1315,67 @@ contract CredentialRegistry is AccessControl, Pausable {
     }
 
     struct Batch {
-        address issuer;
         uint64 anchoredAt;
         uint32 size;
+        address signer;
     }
 
     struct Revocation {
         uint64 revokedAt;
         uint8 reason;
+        address signer;
     }
 
     struct VerificationResult {
         Status status;
-        address issuer;
-        bool issuerActive;
+        bool institutionActive;
         uint64 anchoredAt;
+        address signer;
         uint64 revokedAt;
         uint8 reason;
     }
 
-    mapping(bytes32 root => Batch) private _batches;
-    /// @dev key = keccak256(abi.encode(root, credentialHash)) so a revocation only
-    ///      affects the credential inside the batch that the revoker anchored.
+    mapping(bytes32 institutionId => InstitutionState) private _institutions;
+    mapping(address signer => bytes32 institutionId) private _institutionOf;
+    mapping(bytes32 institutionId => mapping(bytes32 root => Batch)) private _batches;
     mapping(bytes32 key => Revocation) private _revocations;
 
-    event BatchAnchored(bytes32 indexed root, address indexed issuer, uint32 size);
+    event InstitutionRegistered(bytes32 indexed institutionId);
+    event InstitutionSuspended(bytes32 indexed institutionId);
+    event InstitutionReinstated(bytes32 indexed institutionId);
+    event SignerAdded(bytes32 indexed institutionId, address indexed signer);
+    event SignerRemoved(bytes32 indexed institutionId, address indexed signer);
+    event BatchAnchored(bytes32 indexed institutionId, bytes32 indexed root, address indexed signer, uint32 size);
     event CredentialRevoked(
+        bytes32 indexed institutionId,
         bytes32 indexed root,
         bytes32 indexed credentialHash,
-        address indexed issuer,
+        address signer,
         uint8 reason
     );
 
+    error InvalidAdmin();
+    error InvalidInstitution();
+    error InstitutionAlreadyRegistered(bytes32 institutionId);
+    error UnknownInstitution(bytes32 institutionId);
+    error InvalidSigner();
+    error SignerAlreadyAssigned(address signer);
+    error NotASigner(address account);
+    error InstitutionNotActive(bytes32 institutionId);
     error InvalidRoot();
     error InvalidSize();
     error InvalidReason();
     error BatchAlreadyAnchored(bytes32 root);
     error UnknownBatch(bytes32 root);
-    error NotBatchIssuer();
     error NotInBatch();
     error AlreadyRevoked();
 
     constructor(address admin) {
+        if (admin == address(0)) revert InvalidAdmin();
         _grantRole(DEFAULT_ADMIN_ROLE, admin);
     }
 
-
+    /// @notice Emergency stop for anchoring and revoking; verification keeps working.
     function pause() external onlyRole(DEFAULT_ADMIN_ROLE) {
         _pause();
     }
@@ -1195,73 +1384,123 @@ contract CredentialRegistry is AccessControl, Pausable {
         _unpause();
     }
 
-
-    /// @notice Anchor one batch (1..N credentials) with a single transaction.
-    function anchorBatch(bytes32 root, uint32 size) external onlyRole(ISSUER_ROLE) whenNotPaused {
-        if (root == bytes32(0)) revert InvalidRoot();
-        if (size == 0) revert InvalidSize();
-        if (_batches[root].issuer != address(0)) revert BatchAlreadyAnchored(root);
-
-        _batches[root] = Batch({issuer: msg.sender, anchoredAt: uint64(block.timestamp), size: size});
-        emit BatchAnchored(root, msg.sender, size);
+    /// @notice Accredit an institution. `institutionId` = keccak256 of its platform id.
+    function registerInstitution(bytes32 institutionId) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (institutionId == bytes32(0)) revert InvalidInstitution();
+        if (_institutions[institutionId] != InstitutionState.NONE) revert InstitutionAlreadyRegistered(institutionId);
+        _institutions[institutionId] = InstitutionState.ACTIVE;
+        emit InstitutionRegistered(institutionId);
     }
 
-    /// @notice Revoke one credential. Only the institution that anchored the batch,
-    ///         while it still holds ISSUER_ROLE, can revoke it.
+    /// @notice Withdraw accreditation: no new batches or revocations; old credentials stay VALID with a warning.
+    function suspendInstitution(bytes32 institutionId) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (_institutions[institutionId] != InstitutionState.ACTIVE) revert InstitutionNotActive(institutionId);
+        _institutions[institutionId] = InstitutionState.SUSPENDED;
+        emit InstitutionSuspended(institutionId);
+    }
+
+    function reinstateInstitution(bytes32 institutionId) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (_institutions[institutionId] != InstitutionState.SUSPENDED) revert UnknownInstitution(institutionId);
+        _institutions[institutionId] = InstitutionState.ACTIVE;
+        emit InstitutionReinstated(institutionId);
+    }
+
+    /// @notice Authorize a wallet to sign for an institution. A wallet belongs to at most one institution.
+    function addSigner(bytes32 institutionId, address signer) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (_institutions[institutionId] == InstitutionState.NONE) revert UnknownInstitution(institutionId);
+        if (signer == address(0)) revert InvalidSigner();
+        if (_institutionOf[signer] != bytes32(0)) revert SignerAlreadyAssigned(signer);
+        _institutionOf[signer] = institutionId;
+        emit SignerAdded(institutionId, signer);
+    }
+
+    /// @notice Remove a wallet (staff change, lost or stolen key). Past batches are unaffected.
+    function removeSigner(address signer) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        bytes32 institutionId = _institutionOf[signer];
+        if (institutionId == bytes32(0)) revert NotASigner(signer);
+        delete _institutionOf[signer];
+        emit SignerRemoved(institutionId, signer);
+    }
+
+    /// @notice Anchor one batch (1..N credentials) for the caller's institution with a single transaction.
+    function anchorBatch(bytes32 root, uint32 size) external whenNotPaused {
+        bytes32 institutionId = _activeInstitutionOf(msg.sender);
+        if (root == bytes32(0)) revert InvalidRoot();
+        if (size == 0) revert InvalidSize();
+        if (_batches[institutionId][root].anchoredAt != 0) revert BatchAlreadyAnchored(root);
+
+        _batches[institutionId][root] = Batch({anchoredAt: uint64(block.timestamp), size: size, signer: msg.sender});
+        emit BatchAnchored(institutionId, root, msg.sender, size);
+    }
+
+    /// @notice Revoke one credential of the caller's institution, including batches signed by its former wallets.
     /// @param reason 1 = issued in error, 2 = fraud, 3 = superseded, 4 = other. 0 is invalid.
     function revoke(
         bytes32 root,
         bytes32 credentialHash,
         bytes32[] calldata proof,
         uint8 reason
-    ) external onlyRole(ISSUER_ROLE) whenNotPaused {
+    ) external whenNotPaused {
+        bytes32 institutionId = _activeInstitutionOf(msg.sender);
         if (reason == 0) revert InvalidReason();
-        Batch memory batch = _batches[root];
-        if (batch.issuer == address(0)) revert UnknownBatch(root);
-        if (batch.issuer != msg.sender) revert NotBatchIssuer();
+        if (_batches[institutionId][root].anchoredAt == 0) revert UnknownBatch(root);
         if (!MerkleProof.verifyCalldata(proof, root, leafOf(credentialHash))) revert NotInBatch();
 
-        bytes32 key = _revocationKey(root, credentialHash);
+        bytes32 key = _revocationKey(institutionId, root, credentialHash);
         if (_revocations[key].revokedAt != 0) revert AlreadyRevoked();
 
-        _revocations[key] = Revocation({revokedAt: uint64(block.timestamp), reason: reason});
-        emit CredentialRevoked(root, credentialHash, msg.sender, reason);
+        _revocations[key] = Revocation({revokedAt: uint64(block.timestamp), reason: reason, signer: msg.sender});
+        emit CredentialRevoked(institutionId, root, credentialHash, msg.sender, reason);
     }
 
-
-    /// @notice Anyone can call this, even while the contract is paused.
+    /// @notice Anyone can call this, even while paused. `institutionId` must be derived from the credential payload.
     function verify(
+        bytes32 institutionId,
         bytes32 root,
         bytes32 credentialHash,
         bytes32[] calldata proof
     ) external view returns (VerificationResult memory result) {
-        Batch memory batch = _batches[root];
-        if (batch.issuer == address(0)) return result; // UNKNOWN
+        Batch memory batch = _batches[institutionId][root];
+        if (batch.anchoredAt == 0) return result; // UNKNOWN
         if (!MerkleProof.verifyCalldata(proof, root, leafOf(credentialHash))) return result; // UNKNOWN
 
-        Revocation memory rev = _revocations[_revocationKey(root, credentialHash)];
-        result.issuer = batch.issuer;
-        result.issuerActive = hasRole(ISSUER_ROLE, batch.issuer);
+        Revocation memory rev = _revocations[_revocationKey(institutionId, root, credentialHash)];
+        result.institutionActive = _institutions[institutionId] == InstitutionState.ACTIVE;
         result.anchoredAt = batch.anchoredAt;
+        result.signer = batch.signer;
         result.revokedAt = rev.revokedAt;
         result.reason = rev.reason;
         result.status = rev.revokedAt == 0 ? Status.VALID : Status.REVOKED;
     }
 
-    function getBatch(bytes32 root) external view returns (Batch memory) {
-        return _batches[root];
+    function institutionState(bytes32 institutionId) external view returns (InstitutionState) {
+        return _institutions[institutionId];
     }
 
-    function isIssuer(address account) external view returns (bool) {
-        return hasRole(ISSUER_ROLE, account);
+    function institutionOf(address signer) external view returns (bytes32) {
+        return _institutionOf[signer];
+    }
+
+    function getBatch(bytes32 institutionId, bytes32 root) external view returns (Batch memory) {
+        return _batches[institutionId][root];
     }
 
     function leafOf(bytes32 credentialHash) public pure returns (bytes32) {
         return keccak256(bytes.concat(keccak256(abi.encode(credentialHash))));
     }
 
-    function _revocationKey(bytes32 root, bytes32 credentialHash) private pure returns (bytes32) {
-        return keccak256(abi.encode(root, credentialHash));
+    function _activeInstitutionOf(address signer) private view returns (bytes32 institutionId) {
+        institutionId = _institutionOf[signer];
+        if (institutionId == bytes32(0)) revert NotASigner(signer);
+        if (_institutions[institutionId] != InstitutionState.ACTIVE) revert InstitutionNotActive(institutionId);
+    }
+
+    function _revocationKey(bytes32 institutionId, bytes32 root, bytes32 credentialHash)
+        private
+        pure
+        returns (bytes32)
+    {
+        return keccak256(abi.encode(institutionId, root, credentialHash));
     }
 }
 ```
@@ -1269,13 +1508,13 @@ contract CredentialRegistry is AccessControl, Pausable {
 - [ ] **Step 4: Run to see it pass**
 
 Run: `npm test -w @not/contracts`
-Expected: `16 passing`
+Expected: `22 passing`
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add packages/contracts
-git commit -m "feat(contracts): add verify and revoke scoped to the anchoring issuer"
+git commit -m "feat(contracts): add verify and revoke scoped to the anchoring institution"
 ```
 
 ---
@@ -1303,7 +1542,10 @@ describe("credential-core <-> CredentialRegistry", function () {
   it("hashes built off-chain verify on-chain as VALID", async function () {
     const [admin, uni] = await ethers.getSigners();
     const registry = await (await ethers.getContractFactory("CredentialRegistry")).deploy(admin.address);
-    await registry.grantRole(await registry.ISSUER_ROLE(), uni.address);
+    const institutionPlatformId = "inst-1";
+    const institutionId = ethers.id(institutionPlatformId);
+    await registry.registerInstitution(institutionId);
+    await registry.addSigner(institutionId, uni.address);
 
     const graduates = ["Ali Hassan", "Mona Adel", "Omar Said"];
     const hashes = graduates.map((fullName, i) =>
@@ -1311,7 +1553,7 @@ describe("credential-core <-> CredentialRegistry", function () {
         {
           schema: "not.credential.v1",
           credentialId: `cred-${i}`,
-          institution: { id: "inst-1", name: "Menoufia University", issuerAddress: uni.address },
+          institution: { id: institutionPlatformId, name: "Menoufia University", issuerAddress: uni.address },
           student: { fullName, studentNumber: `2021-000${i}` },
           award: { title: "B.Sc. Computer Science", type: "DEGREE", graduationDate: "2025-07-01" },
           issuedAt: "2025-07-15T10:00:00.000Z",
@@ -1323,7 +1565,7 @@ describe("credential-core <-> CredentialRegistry", function () {
     await registry.connect(uni).anchorBatch(batch.root, batch.size);
 
     for (const h of hashes) {
-      const r = await registry.verify(batch.root, h, batch.proofs[h]);
+      const r = await registry.verify(institutionId, batch.root, h, batch.proofs[h]);
       expect(r.status).to.equal(1n); // VALID
     }
   });
@@ -1333,7 +1575,7 @@ describe("credential-core <-> CredentialRegistry", function () {
 - [ ] **Step 2: Run it**
 
 Run: `npm test` (repo root, builds credential-core first)
-Expected: credential-core `Tests  11 passed (11)`; contracts `17 passing`.
+Expected: credential-core `Tests  11 passed (11)`; contracts `23 passing`.
 
 If it fails with `Cannot find module '@not/credential-core'`: run `npm install` at the root, then `npm run build -w @not/credential-core`.
 
@@ -1471,7 +1713,7 @@ rm -rf node_modules packages/*/node_modules packages/*/dist packages/contracts/a
 npm ci && npm test
 ```
 
-Expected: `Tests  11 passed (11)` and `17 passing`.
+Expected: `Tests  11 passed (11)` and `23 passing`.
 
 - [ ] **Step 4: Commit and open a PR**
 
@@ -1505,5 +1747,5 @@ git commit -m "chore(contracts): record Sepolia deployment"
 ## Self-review (done by the plan author)
 
 - Spec coverage: ARCHITECTURE sections 2 (rules 1, 4), 5 (payload, hash, salt, leaf), 6 (every function and design decision) map to Tasks 2 to 7. ROADMAP Phase 0 maps to Tasks 1 and 8, Phase 1 to Tasks 2 to 7 and 9.
-- Every code block above was executed in a dry run on a copy of the repo: credential-core 11 tests, contracts 7 (Task 5) then 16 (Task 6) then 17 with integration, local deploy OK.
-- Names are consistent: `computeCredentialHash`, `buildBatch`, `verifyProofLocally`, `anchorBatch`, `revoke`, `verify`, `leafOf`, `ISSUER_ROLE`.
+- Every code block above was executed in a dry run on a copy of the repo: credential-core 11 tests, contracts 11 (Task 5) then 22 (Task 6) then 23 with integration, local deploy OK.
+- Names are consistent: `computeCredentialHash`, `buildBatch`, `verifyProofLocally`, `anchorBatch`, `revoke`, `verify`, `leafOf`, `registerInstitution`, `addSigner`, `removeSigner`, `institutionId`.
