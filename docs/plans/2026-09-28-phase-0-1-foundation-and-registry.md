@@ -1137,11 +1137,19 @@ describe("CredentialRegistry", function () {
     });
 
     it("suspending one institution or removing its signer does not affect another", async function () {
-      const { registry, signerA, signerB, tree } = await loadFixture(deployFixture);
+      const { registry, signerA, signerB, hashes, tree } = await loadFixture(deployFixture);
+      await registry.connect(signerB).anchorBatch(tree.root, 3);
+      await registry.connect(signerA).anchorBatch(tree.root, 3);
+
       await registry.suspendInstitution(INST_A);
+
+      await registry.connect(signerB).revoke(tree.root, hashes[0], proofFor(tree, hashes[0]), Reason.OTHER);
+      expect((await registry.verify(INST_B, tree.root, hashes[0], proofFor(tree, hashes[0]))).institutionActive).to.equal(true);
+      expect((await registry.verify(INST_A, tree.root, hashes[0], proofFor(tree, hashes[0]))).institutionActive).to.equal(false);
+
       await registry.removeSigner(signerA.address);
-      await expect(registry.connect(signerB).anchorBatch(tree.root, 3))
-        .to.emit(registry, "BatchAnchored").withArgs(INST_B, tree.root, signerB.address, 3);
+      await expect(registry.connect(signerB).anchorBatch(fakeHash("b-2"), 3))
+        .to.emit(registry, "BatchAnchored").withArgs(INST_B, fakeHash("b-2"), signerB.address, 3);
       expect(await registry.institutionState(INST_B)).to.equal(State.ACTIVE);
     });
 
@@ -1307,7 +1315,7 @@ describe("CredentialRegistry", function () {
       const { registry, admin, signerA, hashes, tree } = await loadFixture(anchoredFixture);
       const fakes = Array.from({ length: 50 }, (_, i) => fakeHash("fake-" + i));
       const fakeTree = buildTree(fakes);
-      await registry.connect(signerA).anchorBatch(fakeTree.root, fakes.length); // thief using A's stolen key
+      await registry.connect(signerA).anchorBatch(fakeTree.root, fakes.length);
       await registry.connect(admin).removeSigner(signerA.address);
       await expect(registry.connect(admin).revokeBatch(INST_A, fakeTree.root, Reason.SIGNER_COMPROMISED))
         .to.emit(registry, "BatchRevoked").withArgs(INST_A, fakeTree.root, Reason.SIGNER_COMPROMISED);
@@ -1334,6 +1342,20 @@ describe("CredentialRegistry", function () {
       await registry.revokeBatch(INST_A, tree.root, Reason.FRAUD);
       await expect(registry.revokeBatch(INST_A, tree.root, Reason.FRAUD))
         .to.be.revertedWithCustomError(registry, "BatchAlreadyRevoked").withArgs(tree.root);
+    });
+
+    it("revoking A's batch never touches B's batch with the same root", async function () {
+      const { registry, admin, signerA, signerB, hashes, tree } = await loadFixture(deployFixture);
+      await registry.connect(signerA).anchorBatch(tree.root, 3);
+      await registry.connect(signerB).anchorBatch(tree.root, 3);
+
+      await registry.connect(admin).revokeBatch(INST_A, tree.root, Reason.SIGNER_COMPROMISED);
+
+      expect((await registry.verify(INST_A, tree.root, hashes[0], proofFor(tree, hashes[0]))).status).to.equal(Status.REVOKED);
+      expect((await registry.verify(INST_B, tree.root, hashes[0], proofFor(tree, hashes[0]))).status).to.equal(Status.VALID);
+
+      await expect(registry.revokeBatch(INST_B, tree.root, Reason.FRAUD))
+        .to.emit(registry, "BatchRevoked").withArgs(INST_B, tree.root, Reason.FRAUD);
     });
   });
 
@@ -1373,7 +1395,7 @@ describe("CredentialRegistry", function () {
 - [ ] **Step 2: Run to see it fail**
 
 Run: `npm test -w @not/contracts`
-Expected: `12 passing`, `18 failing` (`registry.verify is not a function`, `revoke is not a function`, `revokeBatch is not a function`, no custom error `InstitutionNotSuspended`).
+Expected: `11 passing`, `20 failing` (`registry.verify is not a function`, `revoke is not a function`, `revokeBatch is not a function`, no custom error `InstitutionNotSuspended`).
 
 - [ ] **Step 3: Implement**
 
@@ -1389,7 +1411,6 @@ import {MerkleProof} from "@openzeppelin/contracts/utils/cryptography/MerkleProo
 
 /// @notice Anchors and revokes Merkle roots of academic credential hashes.
 /// @dev Stores NO personal data. Keyed by a stable institution id with rotatable signers (ADR 0001, 0002).
-///      Leaf = keccak256(bytes.concat(keccak256(abi.encode(credentialHash)))), as in OpenZeppelin StandardMerkleTree.
 contract CredentialRegistry is AccessControl, Pausable {
     enum InstitutionState {
         NONE,
@@ -1568,8 +1589,8 @@ contract CredentialRegistry is AccessControl, Pausable {
         bytes32[] calldata proof
     ) external view returns (VerificationResult memory result) {
         Batch memory batch = _batches[institutionId][root];
-        if (batch.anchoredAt == 0) return result; // UNKNOWN
-        if (!MerkleProof.verifyCalldata(proof, root, leafOf(credentialHash))) return result; // UNKNOWN
+        if (batch.anchoredAt == 0) return result;
+        if (!MerkleProof.verifyCalldata(proof, root, leafOf(credentialHash))) return result;
 
         Revocation memory rev = _batchRevocations[institutionId][root];
         if (rev.revokedAt == 0) rev = _revocations[_revocationKey(institutionId, root, credentialHash)];
@@ -1620,7 +1641,7 @@ contract CredentialRegistry is AccessControl, Pausable {
 - [ ] **Step 4: Run to see it pass**
 
 Run: `npm test -w @not/contracts`
-Expected: `30 passing`
+Expected: `31 passing`
 
 - [ ] **Step 5: Commit**
 
@@ -1687,7 +1708,7 @@ describe("credential-core <-> CredentialRegistry", function () {
 - [ ] **Step 2: Run it**
 
 Run: `npm test` (repo root, builds credential-core first)
-Expected: credential-core `Tests  11 passed (11)`; contracts `31 passing`.
+Expected: credential-core `Tests  11 passed (11)`; contracts `32 passing`.
 
 If it fails with `Cannot find module '@not/credential-core'`: run `npm install` at the root, then `npm run build -w @not/credential-core`.
 
@@ -1825,7 +1846,7 @@ rm -rf node_modules packages/*/node_modules packages/*/dist packages/contracts/a
 npm ci && npm test
 ```
 
-Expected: `Tests  11 passed (11)` and `31 passing`.
+Expected: `Tests  11 passed (11)` and `32 passing`.
 
 - [ ] **Step 4: Commit and open a PR**
 
