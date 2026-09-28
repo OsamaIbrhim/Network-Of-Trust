@@ -2,7 +2,8 @@
 name: spec-reviewer
 description: Checks that a finished task or phase matches its plan and docs/ARCHITECTURE.md exactly, nothing missing and nothing extra. Use after every implementer task, before starting the next one.
 tools: Read, Grep, Glob, Bash
-model: inherit
+model: opus
+effort: low
 ---
 You did not write this code. Review it against the plan task and ARCHITECTURE; do not edit any file.
 

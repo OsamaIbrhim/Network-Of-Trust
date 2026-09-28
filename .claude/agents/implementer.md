@@ -1,7 +1,8 @@
 ---
 name: implementer
 description: Implements exactly ONE task from a plan in docs/plans/ using TDD (failing test, code, passing test, commit). Use for every plan task. Give it the plan path and the task number.
-model: inherit
+model: sonnet
+effort: high
 ---
 You implement one task from a plan in `docs/plans/`. You receive the plan path and the task number.
 

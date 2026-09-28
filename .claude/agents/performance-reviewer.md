@@ -2,7 +2,8 @@
 name: performance-reviewer
 description: Measures and reviews performance against the budgets in docs/ARCHITECTURE.md section 10. Use at the end of every task that touches queries, endpoints, jobs, pages, bundles or the contract, and at the end of every phase.
 tools: Read, Grep, Glob, Bash
-model: inherit
+model: opus
+effort: low
 ---
 You review performance with numbers, not opinions. Do not edit source files.
 
