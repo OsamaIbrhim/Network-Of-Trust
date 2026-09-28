@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { canonicalJson } from "../src/canonical-json";
-import { computeCredentialHash, generateSalt, type CredentialPayload, type Hex } from "../src/credential-hash";
+import { AbiCoder, keccak256, toUtf8Bytes } from "ethers";
+import {
+  buildBatch,
+  canonicalJson,
+  computeCredentialHash,
+  generateSalt,
+  verifyProofLocally,
+  type CredentialPayload,
+  type Hex,
+} from "../src";
 
 const SALT = ("0x" + "11".repeat(32)) as Hex;
 
@@ -14,6 +22,8 @@ function payload(overrides: Partial<CredentialPayload["student"]> = {}): Credent
     issuedAt: "2025-07-15T10:00:00.000Z",
   };
 }
+
+const hash = (label: string) => keccak256(toUtf8Bytes(label)) as Hex;
 
 describe("canonicalJson", () => {
   it("sorts keys at every level and removes whitespace", () => {
@@ -58,5 +68,30 @@ describe("computeCredentialHash", () => {
 
   it("rejects a salt that is not 32 bytes of hex", () => {
     expect(() => computeCredentialHash(payload(), "0x1234" as Hex)).toThrow(TypeError);
+  });
+});
+
+describe("buildBatch / verifyProofLocally", () => {
+  it("returns a proof for every hash that verifies against the root", () => {
+    const hashes = ["a", "b", "c", "d", "e"].map(hash);
+    const batch = buildBatch(hashes);
+    expect(batch.size).toBe(5);
+    for (const h of hashes) expect(verifyProofLocally(batch.root, h, batch.proofs[h])).toBe(true);
+    expect(verifyProofLocally(batch.root, hash("forged"), batch.proofs[hashes[0]])).toBe(false);
+  });
+
+  it("uses the same leaf formula as CredentialRegistry.leafOf (single-item root == leaf)", () => {
+    const h = hash("solo");
+    const leaf = keccak256(keccak256(AbiCoder.defaultAbiCoder().encode(["bytes32"], [h])));
+    const batch = buildBatch([h]);
+    expect(batch.root).toBe(leaf);
+    expect(batch.proofs[h]).toEqual([]);
+  });
+
+  it("rejects empty batches, duplicates (any letter case) and malformed hashes", () => {
+    const h = hash("x");
+    expect(() => buildBatch([])).toThrow(RangeError);
+    expect(() => buildBatch([h, h.toUpperCase().replace("0X", "0x") as Hex])).toThrow(RangeError);
+    expect(() => buildBatch(["0x1234" as Hex])).toThrow(TypeError);
   });
 });
