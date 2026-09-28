@@ -1671,6 +1671,8 @@ const { expect } = require("chai");
 const { ethers } = require("hardhat");
 const core = require("@not/credential-core");
 
+const Status = { UNKNOWN: 0n, VALID: 1n, REVOKED: 2n };
+
 describe("credential-core <-> CredentialRegistry", function () {
   it("hashes built off-chain verify on-chain as VALID", async function () {
     const [admin, uni] = await ethers.getSigners();
@@ -1699,7 +1701,7 @@ describe("credential-core <-> CredentialRegistry", function () {
 
     for (const h of hashes) {
       const r = await registry.verify(institutionId, batch.root, h, batch.proofs[h]);
-      expect(r.status).to.equal(1n); // VALID
+      expect(r.status).to.equal(Status.VALID);
     }
   });
 });
@@ -1717,20 +1719,29 @@ If it fails with `Cannot find module '@not/credential-core'`: run `npm install` 
 `packages/contracts/scripts/deploy.js`:
 
 ```js
-// Usage: npx hardhat run scripts/deploy.js --network <localhost|sepolia>
-// Env: REGISTRY_ADMIN (optional, defaults to the deployer address)
 const fs = require("fs");
 const path = require("path");
 const { ethers, network } = require("hardhat");
 
+// Dev/test networks may fall back to the deployer as admin; anywhere else the
+// admin (e.g. a multisig) must be given explicitly (ADR 0005: platform admin trust).
+const DEPLOYER_FALLBACK_NETWORKS = ["hardhat", "localhost", "sepolia"];
+
 async function main() {
   const [deployer] = await ethers.getSigners();
-  const admin = process.env.REGISTRY_ADMIN || deployer.address;
+  const registryAdmin = process.env.REGISTRY_ADMIN;
+  if (!registryAdmin && !DEPLOYER_FALLBACK_NETWORKS.includes(network.name)) {
+    throw new Error(`REGISTRY_ADMIN is required on network "${network.name}"`);
+  }
+  const admin = registryAdmin || deployer.address;
   if (!ethers.isAddress(admin)) throw new Error(`REGISTRY_ADMIN is not an address: ${admin}`);
 
   const Registry = await ethers.getContractFactory("CredentialRegistry");
   const registry = await Registry.deploy(admin);
   const receipt = await registry.deploymentTransaction().wait();
+
+  const hasAdminRole = await registry.hasRole(await registry.DEFAULT_ADMIN_ROLE(), admin);
+  if (!hasAdminRole) throw new Error(`Deployed registry did not grant DEFAULT_ADMIN_ROLE to ${admin}`);
 
   const out = {
     network: network.name,
@@ -1750,7 +1761,10 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error(err);
+  let message = err.message || String(err);
+  const rpcUrl = process.env.SEPOLIA_RPC_URL;
+  if (rpcUrl) message = message.split(rpcUrl).join("<redacted>");
+  console.error(message);
   process.exitCode = 1;
 });
 ```
