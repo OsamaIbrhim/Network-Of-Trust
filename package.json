@@ -2,7 +2,7 @@
   "name": "network-of-trust",
   "private": true,
   "engines": { "node": ">=22" },
-  "workspaces": ["packages/credential-core"],
+  "workspaces": ["packages/credential-core", "packages/contracts"],
   "scripts": {
     "build": "npm run build --workspaces --if-present",
     "test": "npm run build && npm test --workspaces --if-present"
