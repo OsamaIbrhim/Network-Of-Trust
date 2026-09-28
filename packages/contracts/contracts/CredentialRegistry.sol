@@ -7,7 +7,6 @@ import {MerkleProof} from "@openzeppelin/contracts/utils/cryptography/MerkleProo
 
 /// @notice Anchors and revokes Merkle roots of academic credential hashes.
 /// @dev Stores NO personal data. Keyed by a stable institution id with rotatable signers (ADR 0001, 0002).
-///      Leaf = keccak256(bytes.concat(keccak256(abi.encode(credentialHash)))), as in OpenZeppelin StandardMerkleTree.
 contract CredentialRegistry is AccessControl, Pausable {
     enum InstitutionState {
         NONE,
@@ -186,8 +185,8 @@ contract CredentialRegistry is AccessControl, Pausable {
         bytes32[] calldata proof
     ) external view returns (VerificationResult memory result) {
         Batch memory batch = _batches[institutionId][root];
-        if (batch.anchoredAt == 0) return result; // UNKNOWN
-        if (!MerkleProof.verifyCalldata(proof, root, leafOf(credentialHash))) return result; // UNKNOWN
+        if (batch.anchoredAt == 0) return result;
+        if (!MerkleProof.verifyCalldata(proof, root, leafOf(credentialHash))) return result;
 
         Revocation memory rev = _batchRevocations[institutionId][root];
         if (rev.revokedAt == 0) rev = _revocations[_revocationKey(institutionId, root, credentialHash)];

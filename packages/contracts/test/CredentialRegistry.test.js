@@ -131,11 +131,19 @@ describe("CredentialRegistry", function () {
     });
 
     it("suspending one institution or removing its signer does not affect another", async function () {
-      const { registry, signerA, signerB, tree } = await loadFixture(deployFixture);
+      const { registry, signerA, signerB, hashes, tree } = await loadFixture(deployFixture);
+      await registry.connect(signerB).anchorBatch(tree.root, 3);
+      await registry.connect(signerA).anchorBatch(tree.root, 3);
+
       await registry.suspendInstitution(INST_A);
+
+      await registry.connect(signerB).revoke(tree.root, hashes[0], proofFor(tree, hashes[0]), Reason.OTHER);
+      expect((await registry.verify(INST_B, tree.root, hashes[0], proofFor(tree, hashes[0]))).institutionActive).to.equal(true);
+      expect((await registry.verify(INST_A, tree.root, hashes[0], proofFor(tree, hashes[0]))).institutionActive).to.equal(false);
+
       await registry.removeSigner(signerA.address);
-      await expect(registry.connect(signerB).anchorBatch(tree.root, 3))
-        .to.emit(registry, "BatchAnchored").withArgs(INST_B, tree.root, signerB.address, 3);
+      await expect(registry.connect(signerB).anchorBatch(fakeHash("b-2"), 3))
+        .to.emit(registry, "BatchAnchored").withArgs(INST_B, fakeHash("b-2"), signerB.address, 3);
       expect(await registry.institutionState(INST_B)).to.equal(State.ACTIVE);
     });
 
@@ -301,7 +309,7 @@ describe("CredentialRegistry", function () {
       const { registry, admin, signerA, hashes, tree } = await loadFixture(anchoredFixture);
       const fakes = Array.from({ length: 50 }, (_, i) => fakeHash("fake-" + i));
       const fakeTree = buildTree(fakes);
-      await registry.connect(signerA).anchorBatch(fakeTree.root, fakes.length); // thief using A's stolen key
+      await registry.connect(signerA).anchorBatch(fakeTree.root, fakes.length);
       await registry.connect(admin).removeSigner(signerA.address);
       await expect(registry.connect(admin).revokeBatch(INST_A, fakeTree.root, Reason.SIGNER_COMPROMISED))
         .to.emit(registry, "BatchRevoked").withArgs(INST_A, fakeTree.root, Reason.SIGNER_COMPROMISED);
@@ -328,6 +336,20 @@ describe("CredentialRegistry", function () {
       await registry.revokeBatch(INST_A, tree.root, Reason.FRAUD);
       await expect(registry.revokeBatch(INST_A, tree.root, Reason.FRAUD))
         .to.be.revertedWithCustomError(registry, "BatchAlreadyRevoked").withArgs(tree.root);
+    });
+
+    it("revoking A's batch never touches B's batch with the same root", async function () {
+      const { registry, admin, signerA, signerB, hashes, tree } = await loadFixture(deployFixture);
+      await registry.connect(signerA).anchorBatch(tree.root, 3);
+      await registry.connect(signerB).anchorBatch(tree.root, 3);
+
+      await registry.connect(admin).revokeBatch(INST_A, tree.root, Reason.SIGNER_COMPROMISED);
+
+      expect((await registry.verify(INST_A, tree.root, hashes[0], proofFor(tree, hashes[0]))).status).to.equal(Status.REVOKED);
+      expect((await registry.verify(INST_B, tree.root, hashes[0], proofFor(tree, hashes[0]))).status).to.equal(Status.VALID);
+
+      await expect(registry.revokeBatch(INST_B, tree.root, Reason.FRAUD))
+        .to.emit(registry, "BatchRevoked").withArgs(INST_B, tree.root, Reason.FRAUD);
     });
   });
 
