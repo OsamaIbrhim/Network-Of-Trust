@@ -4,8 +4,6 @@ pragma solidity 0.8.24;
 import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 
-/// @title CredentialRegistry
-/// @notice Anchors Merkle roots of credential hashes and records revocations.
 /// @dev Stores NO personal data. Only 32-byte hashes, issuer addresses and timestamps.
 contract CredentialRegistry is AccessControl, Pausable {
     bytes32 public constant ISSUER_ROLE = keccak256("ISSUER_ROLE");
@@ -28,10 +26,12 @@ contract CredentialRegistry is AccessControl, Pausable {
         _grantRole(DEFAULT_ADMIN_ROLE, admin);
     }
 
+    /// @notice Emergency stop for anchoring; verification keeps working.
     function pause() external onlyRole(DEFAULT_ADMIN_ROLE) {
         _pause();
     }
 
+    /// @notice Resume anchoring after an emergency stop.
     function unpause() external onlyRole(DEFAULT_ADMIN_ROLE) {
         _unpause();
     }
@@ -46,10 +46,12 @@ contract CredentialRegistry is AccessControl, Pausable {
         emit BatchAnchored(root, msg.sender, size);
     }
 
+    /// @notice Issuer, anchor time and size of an anchored root (zero values if unknown).
     function getBatch(bytes32 root) external view returns (Batch memory) {
         return _batches[root];
     }
 
+    /// @notice True while the account holds ISSUER_ROLE.
     function isIssuer(address account) external view returns (bool) {
         return hasRole(ISSUER_ROLE, account);
     }

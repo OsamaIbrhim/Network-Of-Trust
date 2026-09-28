@@ -53,6 +53,36 @@ describe("CredentialRegistry", function () {
       await registry.connect(admin).revokeRole(ISSUER_ROLE, uniA.address);
       expect(await registry.isIssuer(uniA.address)).to.equal(false);
     });
+
+    it("an issuer cannot grant or revoke ISSUER_ROLE for anyone", async function () {
+      const { registry, uniA, uniB, stranger, ISSUER_ROLE } = await loadFixture(deployFixture);
+      await expect(registry.connect(uniA).revokeRole(ISSUER_ROLE, uniB.address))
+        .to.be.revertedWithCustomError(registry, "AccessControlUnauthorizedAccount");
+      await expect(registry.connect(uniA).grantRole(ISSUER_ROLE, stranger.address))
+        .to.be.revertedWithCustomError(registry, "AccessControlUnauthorizedAccount");
+    });
+
+    it("an issuer cannot pause or unpause", async function () {
+      const { registry, admin, uniA } = await loadFixture(deployFixture);
+      await expect(registry.connect(uniA).pause())
+        .to.be.revertedWithCustomError(registry, "AccessControlUnauthorizedAccount");
+      await registry.connect(admin).pause();
+      await expect(registry.connect(uniA).unpause())
+        .to.be.revertedWithCustomError(registry, "AccessControlUnauthorizedAccount");
+    });
+
+    it("the admin cannot anchor without ISSUER_ROLE", async function () {
+      const { registry, admin, tree } = await loadFixture(deployFixture);
+      await expect(registry.connect(admin).anchorBatch(tree.root, 3))
+        .to.be.revertedWithCustomError(registry, "AccessControlUnauthorizedAccount");
+    });
+
+    it("a revoked issuer cannot anchor", async function () {
+      const { registry, admin, uniA, ISSUER_ROLE, tree } = await loadFixture(deployFixture);
+      await registry.connect(admin).revokeRole(ISSUER_ROLE, uniA.address);
+      await expect(registry.connect(uniA).anchorBatch(tree.root, 3))
+        .to.be.revertedWithCustomError(registry, "AccessControlUnauthorizedAccount");
+    });
   });
 
   describe("anchorBatch", function () {
@@ -91,7 +121,7 @@ describe("CredentialRegistry", function () {
       const g1000 = (await (await registry.connect(uniA).anchorBatch(big.root, 1000)).wait()).gasUsed;
       // only calldata bytes differ (a few gas), storage cost is identical
       expect(Number(g1000)).to.be.closeTo(Number(g1), 100);
-      expect(Number(g1000)).to.be.lessThan(80000);
+      expect(Number(g1000)).to.be.lessThan(55000);
     });
   });
 
