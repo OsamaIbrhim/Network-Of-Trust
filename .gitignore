@@ -1,5 +1,18 @@
-/.continue
-/.cursor
-/.vscode
-/cache
-node_modules
+node_modules/
+dist/
+.env
+.env.*
+!.env.example
+*.tsbuildinfo
+coverage/
+# Hardhat
+packages/contracts/artifacts/
+packages/contracts/cache/
+packages/contracts/typechain-types/
+packages/contracts/deployments/hardhat.json
+packages/contracts/deployments/localhost.json
+# Editors
+.vscode/
+.cursor/
+.continue/
+.DS_Store
