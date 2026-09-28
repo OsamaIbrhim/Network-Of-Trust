@@ -2,6 +2,8 @@ const { expect } = require("chai");
 const { ethers } = require("hardhat");
 const core = require("@not/credential-core");
 
+const Status = { UNKNOWN: 0n, VALID: 1n, REVOKED: 2n };
+
 describe("credential-core <-> CredentialRegistry", function () {
   it("hashes built off-chain verify on-chain as VALID", async function () {
     const [admin, uni] = await ethers.getSigners();
@@ -30,7 +32,7 @@ describe("credential-core <-> CredentialRegistry", function () {
 
     for (const h of hashes) {
       const r = await registry.verify(institutionId, batch.root, h, batch.proofs[h]);
-      expect(r.status).to.equal(1n); // VALID
+      expect(r.status).to.equal(Status.VALID);
     }
   });
 });
