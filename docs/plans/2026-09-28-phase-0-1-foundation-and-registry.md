@@ -26,10 +26,11 @@
 2. **Front-running from the mempool**: institution B sees A's pending `anchorBatch` and anchors the same root first. A's transaction must still succeed and A's credentials must verify as A's. Batches are keyed by `(institutionId, root)` (ADR 0001, 0002). Pinned in Task 6.
 3. **Institution B copies A's credential hash into its own batch and revokes it**: A's credential must stay VALID. Pinned in Task 6.
 4. **Wallet rotation** (staff change, lost or stolen key): after `addSigner(new)` + `removeSigner(old)`, old credentials stay VALID with `institutionActive = true`, the new wallet can revoke them, and the old wallet can do nothing (ADR 0002). Pinned in Task 6.
-5. **Deploying with `address(0)` as admin** would leave the contract with nobody able to accredit institutions: the constructor must revert, and admin handover to a new address must work (ADR 0003). Pinned in Task 5.
-6. **Suspended institution tries to anchor or revoke**: both must fail, while its already-issued credentials stay VALID with `institutionActive = false`. Pinned in Tasks 5 and 6.
-7. **Arabic names and Unicode in the payload**: canonical JSON must keep them byte-for-byte so browser and server compute the same hash. Pinned in Task 2.
-8. **Batch size does not change anchoring cost**: 1 credential and 1000 credentials cost about the same gas. Pinned in Task 5.
+5. **Stolen signer key**: the thief anchors a batch of fake credentials. After `removeSigner`, the admin's `revokeBatch` must make every fake credential verify as REVOKED without knowing its leaves, genuine batches must stay VALID, and a signer must never be able to call `revokeBatch` (roots are public, so it would let a stolen key wipe out genuine degrees) (ADR 0004). Pinned in Task 6.
+6. **Deploying with `address(0)` as admin** would leave the contract with nobody able to accredit institutions: the constructor must revert, and admin handover to a new address must work (ADR 0003). Pinned in Task 5.
+7. **Suspended institution tries to anchor or revoke**: both must fail, while its already-issued credentials stay VALID with `institutionActive = false`. Pinned in Tasks 5 and 6.
+8. **Arabic names and Unicode in the payload**: canonical JSON must keep them byte-for-byte so browser and server compute the same hash. Pinned in Task 2.
+9. **Batch size does not change anchoring cost**: 1 credential and 1000 credentials cost about the same gas. Pinned in Task 5.
 
 ---
 
@@ -853,10 +854,7 @@ import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 
 /// @title CredentialRegistry
 /// @notice Anchors Merkle roots of credential hashes.
-/// @dev Stores NO personal data. An institution has a stable id (keccak256 of its platform id) and a set
-///      of signer wallets that can change over time (ADR 0002). Batches and revocations are keyed by
-///      institution id, so wallet rotation keeps old credentials valid and revocable, and nobody can
-///      front-run another institution's root (ADR 0001).
+/// @dev Stores NO personal data. Keyed by a stable institution id with rotatable signers (ADR 0001, 0002).
 contract CredentialRegistry is AccessControl, Pausable {
     enum InstitutionState {
         NONE,
@@ -991,7 +989,7 @@ git commit -m "feat(contracts): add CredentialRegistry with institutions, signer
 
 ### Task 6: verify and revoke
 
-Batches and revocations are keyed by `(institutionId, root)`, so nobody can block or hijack another institution's batch by anchoring its root first (ADR 0001), and a university can change wallets without losing the ability to revoke old credentials (ADR 0002). If Task 5 was already committed with an older contract shape, this task's full-file replacement of the contract and the test file replaces it too.
+Batches and revocations are keyed by `(institutionId, root)`, so nobody can block or hijack another institution's batch by anchoring its root first (ADR 0001), a university can change wallets without losing the ability to revoke old credentials (ADR 0002), and fake batches anchored with a stolen key can be revoked by the admin, while a stolen key itself cannot revoke genuine batches (ADR 0004). If Task 5 was already committed with an older contract shape, this task's full-file replacement of the contract and the test file replaces it too.
 
 **Files:**
 - Modify: `packages/contracts/contracts/CredentialRegistry.sol` (final version)
@@ -999,7 +997,7 @@ Batches and revocations are keyed by `(institutionId, root)`, so nobody can bloc
 
 **Interfaces:**
 - Consumes: everything from Task 5.
-- Produces (Solidity): `enum Status { UNKNOWN, VALID, REVOKED }`, `verify(bytes32 institutionId, bytes32 root, bytes32 credentialHash, bytes32[] proof) returns (VerificationResult{Status status; bool institutionActive; uint64 anchoredAt; address signer; uint64 revokedAt; uint8 reason})` where `institutionId` is always derived from `payload.institution.id`, `revoke(bytes32 root, bytes32 credentialHash, bytes32[] proof, uint8 reason)` for any current signer of the institution that anchored the root, `leafOf(bytes32) returns (bytes32)`, event `CredentialRevoked(bytes32 indexed institutionId, bytes32 indexed root, bytes32 indexed credentialHash, address signer, uint8 reason)`, errors `InvalidReason()`, `UnknownBatch(bytes32)`, `NotInBatch()`, `AlreadyRevoked()`. Reason codes: 1 issued in error, 2 fraud, 3 superseded, 4 other.
+- Produces (Solidity): `enum Status { UNKNOWN, VALID, REVOKED }`, `verify(bytes32 institutionId, bytes32 root, bytes32 credentialHash, bytes32[] proof) returns (VerificationResult{Status status; bool institutionActive; uint64 anchoredAt; address signer; uint64 revokedAt; uint8 reason})` where `institutionId` is always derived from `payload.institution.id`, `revoke(bytes32 root, bytes32 credentialHash, bytes32[] proof, uint8 reason)` for any current signer of the institution that anchored the root, `leafOf(bytes32) returns (bytes32)`, event `CredentialRevoked(bytes32 indexed institutionId, bytes32 indexed root, bytes32 indexed credentialHash, address signer, uint8 reason)`, `revokeBatch(bytes32 institutionId, bytes32 root, uint8 reason)` (admin only, works while paused, ADR 0004), events `CredentialRevoked(...)` and `BatchRevoked(bytes32 indexed institutionId, bytes32 indexed root, uint8 reason)`, errors `InvalidReason()`, `UnknownBatch(bytes32)`, `NotInBatch()`, `AlreadyRevoked()`, `BatchAlreadyRevoked(bytes32)`, and `reinstateInstitution` now reverts `InstitutionNotSuspended(bytes32)` instead of `UnknownInstitution`. Reason codes: 1 issued in error, 2 fraud, 3 superseded, 4 other, 5 signer compromised.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1013,7 +1011,7 @@ const { StandardMerkleTree } = require("@openzeppelin/merkle-tree");
 
 const Status = { UNKNOWN: 0n, VALID: 1n, REVOKED: 2n };
 const State = { NONE: 0n, ACTIVE: 1n, SUSPENDED: 2n };
-const Reason = { ISSUED_IN_ERROR: 1, FRAUD: 2, SUPERSEDED: 3, OTHER: 4 };
+const Reason = { ISSUED_IN_ERROR: 1, FRAUD: 2, SUPERSEDED: 3, OTHER: 4, SIGNER_COMPROMISED: 5 };
 const INST_A = ethers.id("institution-a-uuid");
 const INST_B = ethers.id("institution-b-uuid");
 
@@ -1070,13 +1068,26 @@ describe("CredentialRegistry", function () {
 
   describe("institutions and signers", function () {
     it("only the admin can register institutions and manage signers", async function () {
-      const { registry, stranger } = await loadFixture(deployFixture);
+      const { registry, signerA, stranger } = await loadFixture(deployFixture);
       await expect(registry.connect(stranger).registerInstitution(ethers.id("x")))
         .to.be.revertedWithCustomError(registry, "AccessControlUnauthorizedAccount");
       await expect(registry.connect(stranger).addSigner(INST_A, stranger.address))
         .to.be.revertedWithCustomError(registry, "AccessControlUnauthorizedAccount");
+      await expect(registry.connect(stranger).removeSigner(signerA.address))
+        .to.be.revertedWithCustomError(registry, "AccessControlUnauthorizedAccount");
       await expect(registry.connect(stranger).suspendInstitution(INST_A))
         .to.be.revertedWithCustomError(registry, "AccessControlUnauthorizedAccount");
+      await registry.suspendInstitution(INST_A);
+      await expect(registry.connect(stranger).reinstateInstitution(INST_A))
+        .to.be.revertedWithCustomError(registry, "AccessControlUnauthorizedAccount");
+    });
+
+    it("reinstates only a suspended institution", async function () {
+      const { registry } = await loadFixture(deployFixture);
+      await expect(registry.reinstateInstitution(INST_A))
+        .to.be.revertedWithCustomError(registry, "InstitutionNotSuspended").withArgs(INST_A);
+      await expect(registry.reinstateInstitution(ethers.id("nope")))
+        .to.be.revertedWithCustomError(registry, "InstitutionNotSuspended");
     });
 
     it("rejects a zero id, a duplicate id, an unknown institution, a zero signer and a signer that already belongs somewhere", async function () {
@@ -1098,6 +1109,53 @@ describe("CredentialRegistry", function () {
       expect(await registry.institutionState(INST_A)).to.equal(State.ACTIVE);
       expect(await registry.institutionOf(signerA.address)).to.equal(INST_A);
       expect(await registry.institutionOf(stranger.address)).to.equal(ethers.ZeroHash);
+    });
+  });
+
+  describe("cross-institution isolation", function () {
+    it("a signer cannot use admin functions, against its own institution or another one", async function () {
+      const { registry, signerA, signerB, stranger } = await loadFixture(deployFixture);
+      const asA = registry.connect(signerA);
+      const ADMIN = await registry.DEFAULT_ADMIN_ROLE();
+      for (const call of [
+        () => asA.removeSigner(signerB.address),
+        () => asA.suspendInstitution(INST_B),
+        () => asA.addSigner(INST_B, stranger.address),
+        () => asA.addSigner(INST_A, stranger.address),
+        () => asA.registerInstitution(ethers.id("x")),
+        () => asA.grantRole(ADMIN, signerA.address),
+        () => asA.pause(),
+      ]) {
+        await expect(call()).to.be.revertedWithCustomError(registry, "AccessControlUnauthorizedAccount");
+      }
+    });
+
+    it("the admin is not a signer and cannot anchor", async function () {
+      const { registry, admin, tree } = await loadFixture(deployFixture);
+      await expect(registry.connect(admin).anchorBatch(tree.root, 3))
+        .to.be.revertedWithCustomError(registry, "NotASigner").withArgs(admin.address);
+    });
+
+    it("suspending one institution or removing its signer does not affect another", async function () {
+      const { registry, signerA, signerB, tree } = await loadFixture(deployFixture);
+      await registry.suspendInstitution(INST_A);
+      await registry.removeSigner(signerA.address);
+      await expect(registry.connect(signerB).anchorBatch(tree.root, 3))
+        .to.emit(registry, "BatchAnchored").withArgs(INST_B, tree.root, signerB.address, 3);
+      expect(await registry.institutionState(INST_B)).to.equal(State.ACTIVE);
+    });
+
+    it("a wallet moved from A to B signs for B only and cannot revoke A's old batches", async function () {
+      const { registry, signerA, hashes, tree } = await loadFixture(anchoredFixture);
+      await registry.removeSigner(signerA.address);
+      await registry.addSigner(INST_B, signerA.address);
+      await expect(registry.connect(signerA).revoke(tree.root, hashes[0], proofFor(tree, hashes[0]), Reason.FRAUD))
+        .to.be.revertedWithCustomError(registry, "UnknownBatch").withArgs(tree.root);
+      const rootB = fakeHash("b-root");
+      await expect(registry.connect(signerA).anchorBatch(rootB, 1))
+        .to.emit(registry, "BatchAnchored").withArgs(INST_B, rootB, signerA.address, 1);
+      expect((await registry.getBatch(INST_A, rootB)).anchoredAt).to.equal(0n);
+      expect((await registry.verify(INST_A, tree.root, hashes[0], proofFor(tree, hashes[0]))).status).to.equal(Status.VALID);
     });
   });
 
@@ -1244,6 +1302,41 @@ describe("CredentialRegistry", function () {
     });
   });
 
+  describe("stolen signer key (revokeBatch)", function () {
+    it("admin revokes a whole fake batch without knowing its leaves; genuine batches stay VALID", async function () {
+      const { registry, admin, signerA, hashes, tree } = await loadFixture(anchoredFixture);
+      const fakes = Array.from({ length: 50 }, (_, i) => fakeHash("fake-" + i));
+      const fakeTree = buildTree(fakes);
+      await registry.connect(signerA).anchorBatch(fakeTree.root, fakes.length); // thief using A's stolen key
+      await registry.connect(admin).removeSigner(signerA.address);
+      await expect(registry.connect(admin).revokeBatch(INST_A, fakeTree.root, Reason.SIGNER_COMPROMISED))
+        .to.emit(registry, "BatchRevoked").withArgs(INST_A, fakeTree.root, Reason.SIGNER_COMPROMISED);
+      for (const h of [fakes[0], fakes[49]]) {
+        const r = await registry.verify(INST_A, fakeTree.root, h, proofFor(fakeTree, h));
+        expect(r.status).to.equal(Status.REVOKED);
+        expect(r.reason).to.equal(BigInt(Reason.SIGNER_COMPROMISED));
+      }
+      expect((await registry.verify(INST_A, tree.root, hashes[0], proofFor(tree, hashes[0]))).status).to.equal(Status.VALID);
+    });
+
+    it("a signer (e.g. a stolen key) cannot revoke whole batches, even though every root is public", async function () {
+      const { registry, signerA, tree } = await loadFixture(anchoredFixture);
+      await expect(registry.connect(signerA).revokeBatch(INST_A, tree.root, Reason.FRAUD))
+        .to.be.revertedWithCustomError(registry, "AccessControlUnauthorizedAccount");
+    });
+
+    it("rejects reason 0, unknown roots and double batch revocation, and works while paused", async function () {
+      const { registry, admin, tree } = await loadFixture(anchoredFixture);
+      await expect(registry.revokeBatch(INST_A, tree.root, 0)).to.be.revertedWithCustomError(registry, "InvalidReason");
+      await expect(registry.revokeBatch(INST_B, tree.root, Reason.FRAUD))
+        .to.be.revertedWithCustomError(registry, "UnknownBatch").withArgs(tree.root);
+      await registry.connect(admin).pause();
+      await registry.revokeBatch(INST_A, tree.root, Reason.FRAUD);
+      await expect(registry.revokeBatch(INST_A, tree.root, Reason.FRAUD))
+        .to.be.revertedWithCustomError(registry, "BatchAlreadyRevoked").withArgs(tree.root);
+    });
+  });
+
   describe("suspension", function () {
     it("keeps old credentials VALID with institutionActive=false, blocks new actions, and can be reinstated", async function () {
       const { registry, signerA, hashes, tree } = await loadFixture(anchoredFixture);
@@ -1269,6 +1362,7 @@ describe("CredentialRegistry", function () {
       await expect(registry.connect(signerA).revoke(tree.root, hashes[0], proofFor(tree, hashes[0]), Reason.OTHER))
         .to.be.revertedWithCustomError(registry, "EnforcedPause");
       expect((await registry.verify(INST_A, tree.root, hashes[0], proofFor(tree, hashes[0]))).status).to.equal(Status.VALID);
+      await expect(registry.connect(stranger).unpause()).to.be.revertedWithCustomError(registry, "AccessControlUnauthorizedAccount");
       await registry.connect(admin).unpause();
       await registry.connect(signerA).anchorBatch(fakeHash("r2"), 1);
     });
@@ -1279,7 +1373,7 @@ describe("CredentialRegistry", function () {
 - [ ] **Step 2: Run to see it fail**
 
 Run: `npm test -w @not/contracts`
-Expected: `9 passing`, `13 failing` (`registry.verify is not a function`, `registry.revoke is not a function`).
+Expected: `12 passing`, `18 failing` (`registry.verify is not a function`, `revoke is not a function`, `revokeBatch is not a function`, no custom error `InstitutionNotSuspended`).
 
 - [ ] **Step 3: Implement**
 
@@ -1293,14 +1387,9 @@ import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {MerkleProof} from "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
 
-/// @title CredentialRegistry
-/// @notice Anchors Merkle roots of credential hashes and records revocations.
-/// @dev Stores NO personal data. An institution has a stable id (keccak256 of its platform id) and a set
-///      of signer wallets that can change over time (ADR 0002). Batches and revocations are keyed by
-///      institution id, so wallet rotation keeps old credentials valid and revocable, and nobody can
-///      front-run another institution's root (ADR 0001).
-///      Leaf format matches the OpenZeppelin merkle-tree JS library (StandardMerkleTree, ["bytes32"]):
-///      leaf = keccak256(bytes.concat(keccak256(abi.encode(credentialHash))))
+/// @notice Anchors and revokes Merkle roots of academic credential hashes.
+/// @dev Stores NO personal data. Keyed by a stable institution id with rotatable signers (ADR 0001, 0002).
+///      Leaf = keccak256(bytes.concat(keccak256(abi.encode(credentialHash)))), as in OpenZeppelin StandardMerkleTree.
 contract CredentialRegistry is AccessControl, Pausable {
     enum InstitutionState {
         NONE,
@@ -1339,6 +1428,7 @@ contract CredentialRegistry is AccessControl, Pausable {
     mapping(address signer => bytes32 institutionId) private _institutionOf;
     mapping(bytes32 institutionId => mapping(bytes32 root => Batch)) private _batches;
     mapping(bytes32 key => Revocation) private _revocations;
+    mapping(bytes32 institutionId => mapping(bytes32 root => Revocation)) private _batchRevocations;
 
     event InstitutionRegistered(bytes32 indexed institutionId);
     event InstitutionSuspended(bytes32 indexed institutionId);
@@ -1346,6 +1436,7 @@ contract CredentialRegistry is AccessControl, Pausable {
     event SignerAdded(bytes32 indexed institutionId, address indexed signer);
     event SignerRemoved(bytes32 indexed institutionId, address indexed signer);
     event BatchAnchored(bytes32 indexed institutionId, bytes32 indexed root, address indexed signer, uint32 size);
+    event BatchRevoked(bytes32 indexed institutionId, bytes32 indexed root, uint8 reason);
     event CredentialRevoked(
         bytes32 indexed institutionId,
         bytes32 indexed root,
@@ -1362,6 +1453,7 @@ contract CredentialRegistry is AccessControl, Pausable {
     error SignerAlreadyAssigned(address signer);
     error NotASigner(address account);
     error InstitutionNotActive(bytes32 institutionId);
+    error InstitutionNotSuspended(bytes32 institutionId);
     error InvalidRoot();
     error InvalidSize();
     error InvalidReason();
@@ -1369,6 +1461,7 @@ contract CredentialRegistry is AccessControl, Pausable {
     error UnknownBatch(bytes32 root);
     error NotInBatch();
     error AlreadyRevoked();
+    error BatchAlreadyRevoked(bytes32 root);
 
     constructor(address admin) {
         if (admin == address(0)) revert InvalidAdmin();
@@ -1380,6 +1473,7 @@ contract CredentialRegistry is AccessControl, Pausable {
         _pause();
     }
 
+    /// @notice Resume anchoring and revoking after an emergency stop.
     function unpause() external onlyRole(DEFAULT_ADMIN_ROLE) {
         _unpause();
     }
@@ -1399,8 +1493,9 @@ contract CredentialRegistry is AccessControl, Pausable {
         emit InstitutionSuspended(institutionId);
     }
 
+    /// @notice Restore a suspended institution's accreditation.
     function reinstateInstitution(bytes32 institutionId) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        if (_institutions[institutionId] != InstitutionState.SUSPENDED) revert UnknownInstitution(institutionId);
+        if (_institutions[institutionId] != InstitutionState.SUSPENDED) revert InstitutionNotSuspended(institutionId);
         _institutions[institutionId] = InstitutionState.ACTIVE;
         emit InstitutionReinstated(institutionId);
     }
@@ -1434,7 +1529,7 @@ contract CredentialRegistry is AccessControl, Pausable {
     }
 
     /// @notice Revoke one credential of the caller's institution, including batches signed by its former wallets.
-    /// @param reason 1 = issued in error, 2 = fraud, 3 = superseded, 4 = other. 0 is invalid.
+    /// @param reason 1 = issued in error, 2 = fraud, 3 = superseded, 4 = other, 5 = signer compromised. 0 is invalid.
     function revoke(
         bytes32 root,
         bytes32 credentialHash,
@@ -1453,6 +1548,18 @@ contract CredentialRegistry is AccessControl, Pausable {
         emit CredentialRevoked(institutionId, root, credentialHash, msg.sender, reason);
     }
 
+    /// @notice Emergency: revoke a whole batch, e.g. one anchored with a stolen signer key (ADR 0004).
+    /// @dev Admin only: roots are public in events, so a stolen signer key must not be able to wipe out genuine batches.
+    function revokeBatch(bytes32 institutionId, bytes32 root, uint8 reason) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        if (reason == 0) revert InvalidReason();
+        if (_batches[institutionId][root].anchoredAt == 0) revert UnknownBatch(root);
+        if (_batchRevocations[institutionId][root].revokedAt != 0) revert BatchAlreadyRevoked(root);
+
+        _batchRevocations[institutionId][root] =
+            Revocation({revokedAt: uint64(block.timestamp), reason: reason, signer: msg.sender});
+        emit BatchRevoked(institutionId, root, reason);
+    }
+
     /// @notice Anyone can call this, even while paused. `institutionId` must be derived from the credential payload.
     function verify(
         bytes32 institutionId,
@@ -1464,7 +1571,8 @@ contract CredentialRegistry is AccessControl, Pausable {
         if (batch.anchoredAt == 0) return result; // UNKNOWN
         if (!MerkleProof.verifyCalldata(proof, root, leafOf(credentialHash))) return result; // UNKNOWN
 
-        Revocation memory rev = _revocations[_revocationKey(institutionId, root, credentialHash)];
+        Revocation memory rev = _batchRevocations[institutionId][root];
+        if (rev.revokedAt == 0) rev = _revocations[_revocationKey(institutionId, root, credentialHash)];
         result.institutionActive = _institutions[institutionId] == InstitutionState.ACTIVE;
         result.anchoredAt = batch.anchoredAt;
         result.signer = batch.signer;
@@ -1473,18 +1581,22 @@ contract CredentialRegistry is AccessControl, Pausable {
         result.status = rev.revokedAt == 0 ? Status.VALID : Status.REVOKED;
     }
 
+    /// @notice Accreditation state of an institution (NONE if never registered).
     function institutionState(bytes32 institutionId) external view returns (InstitutionState) {
         return _institutions[institutionId];
     }
 
+    /// @notice Institution a wallet currently signs for (zero if none).
     function institutionOf(address signer) external view returns (bytes32) {
         return _institutionOf[signer];
     }
 
+    /// @notice Anchor time, size and signing wallet of an institution's root (zero values if unknown).
     function getBatch(bytes32 institutionId, bytes32 root) external view returns (Batch memory) {
         return _batches[institutionId][root];
     }
 
+    /// @notice Merkle leaf for a credential hash, identical to OpenZeppelin StandardMerkleTree(["bytes32"]).
     function leafOf(bytes32 credentialHash) public pure returns (bytes32) {
         return keccak256(bytes.concat(keccak256(abi.encode(credentialHash))));
     }
@@ -1508,7 +1620,7 @@ contract CredentialRegistry is AccessControl, Pausable {
 - [ ] **Step 4: Run to see it pass**
 
 Run: `npm test -w @not/contracts`
-Expected: `22 passing`
+Expected: `30 passing`
 
 - [ ] **Step 5: Commit**
 
@@ -1575,7 +1687,7 @@ describe("credential-core <-> CredentialRegistry", function () {
 - [ ] **Step 2: Run it**
 
 Run: `npm test` (repo root, builds credential-core first)
-Expected: credential-core `Tests  11 passed (11)`; contracts `23 passing`.
+Expected: credential-core `Tests  11 passed (11)`; contracts `31 passing`.
 
 If it fails with `Cannot find module '@not/credential-core'`: run `npm install` at the root, then `npm run build -w @not/credential-core`.
 
@@ -1713,7 +1825,7 @@ rm -rf node_modules packages/*/node_modules packages/*/dist packages/contracts/a
 npm ci && npm test
 ```
 
-Expected: `Tests  11 passed (11)` and `23 passing`.
+Expected: `Tests  11 passed (11)` and `31 passing`.
 
 - [ ] **Step 4: Commit and open a PR**
 
@@ -1747,5 +1859,5 @@ git commit -m "chore(contracts): record Sepolia deployment"
 ## Self-review (done by the plan author)
 
 - Spec coverage: ARCHITECTURE sections 2 (rules 1, 4), 5 (payload, hash, salt, leaf), 6 (every function and design decision) map to Tasks 2 to 7. ROADMAP Phase 0 maps to Tasks 1 and 8, Phase 1 to Tasks 2 to 7 and 9.
-- Every code block above was executed in a dry run on a copy of the repo: credential-core 11 tests, contracts 11 (Task 5) then 22 (Task 6) then 23 with integration, local deploy OK.
+- Every code block above was executed in a dry run on a copy of the repo: credential-core 11 tests, contracts 11 (Task 5) then 25 (Task 6) then 26 with integration, local deploy OK.
 - Names are consistent: `computeCredentialHash`, `buildBatch`, `verifyProofLocally`, `anchorBatch`, `revoke`, `verify`, `leafOf`, `registerInstitution`, `addSigner`, `removeSigner`, `institutionId`.

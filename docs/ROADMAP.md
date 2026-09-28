@@ -60,11 +60,11 @@ MVP means Minimum Viable Product: the smallest version real users can use from s
 - **Workflow engine** (section 8.2): definitions (versioned), instances, actions, four-eyes rule, reject-to-start; generic, with no action-specific code inside the engine.
 - **Default Egyptian faculty template**: seeded positions and default workflows, copied into each new university on creation.
 - **Domain events + outbox** (section 9): `OutboxEvent` + per-handler `EventDelivery` with retries, timeout and dead-letter; later phases only add event types and handlers.
-- **Performance baseline**: after the tooling is in place, measure the API and web baselines on seed data and confirm or revise the starting targets of section 10.1 (ADR `0004-performance-budgets`).
+- **Performance baseline**: after the tooling is in place, measure the API and web baselines on seed data and confirm or revise the starting targets of section 10.1 (ADR `0006-performance-budgets`).
 - **Performance tooling** (section 10.5): Fastify adapter (ADR with benchmark vs Express), pg-boss queue in the worker, SQL query-count test helper, slow-query log, `pg_stat_statements`, k6 script + seed data, `size-limit` and Lighthouse CI in the web app, gas budget assertions in the contracts suite.
 - **Plugin foundation** (section 9.1): `core/`, `features/`, `sdk/` split in api and web; `apps/worker` process for event handlers and heavy jobs; `FeatureFlag` per university with admin screen; `dependency-cruiser` rules in CI; UI error boundary and menu/route slots. Prove it with a tiny `features/hello` plugin (one page, one event handler) that is deleted before merge.
 - Institutions (universities): register, profile (logo, seal upload), faculties and departments, staff invitations with assignments, SIWE wallet link, platform-admin approval queue, suspension.
-- Chain listener skeleton: reads `InstitutionRegistered`, `InstitutionSuspended`, `InstitutionReinstated`, `SignerAdded`, `SignerRemoved`, stores last processed block, idempotent.
+- Chain listener skeleton: reads `InstitutionRegistered`, `InstitutionSuspended`, `InstitutionReinstated`, `SignerAdded`, `SignerRemoved`, stores last processed block, idempotent. Any `SignerAdded` / `SignerRemoved` our database did not initiate raises a high-priority alert (ADR 0005).
 - `apps/web`: Next.js, auth pages, role-based redirect after login, admin approval page (calls `registerInstitution` + `addSigner` via MetaMask), wallet change request and approval (`addSigner` / `removeSigner`), institution profile page. Arabic + English with RTL from day one.
 - Audit log for every write.
 
@@ -95,11 +95,12 @@ Spec: ARCHITECTURE sections 7.2 (eligibility, approval queue), 7.3, 7.5, 7.6, 8.
 - **Eligibility engine**: runs on term publish and on every requirement change; writes `GraduationCheck` with status NOT_YET / BLOCKED / ELIGIBLE and readable reasons ("Major electives: 9 of 12 credits", "Military Education: pending").
 - **Approval queue** driven by the `GRADUATION_ISSUE` workflow: per program and graduation term, eligible and blocked lists, student drill-down, exclude with reason, one **Approve** button per step; the last step signs and anchors.
 - Issuance: payloads (with program, bylaw version, earned credits, cumulative GPA), salts, hashes, one Merkle tree per approval via credential-core; store proofs; MetaMask `anchorBatch`.
-- Listener: `BatchAnchored` (with issuer match check and confirmations) and `CredentialRevoked`.
+- Listener: `BatchAnchored` (matched by institution id and root, with confirmations), `CredentialRevoked`, `BatchRevoked`. A `BatchAnchored` with no matching prepared batch raises a high-priority "possible stolen key" alert (ADR 0004).
+- Platform admin screen for the stolen-key procedure: remove signer, list flagged batches, `revokeBatch(..., 5)` each.
 - PDF generation (HTML template with university logo and seal, QR to `/verify/{id}`), student notification email.
 - Revoke screen with reason; supersede flow (revoke + reissue).
 
-**Done when:** e2e on a local Hardhat node: a student with 144 credits and Military Education pending is BLOCKED with that reason, recording the requirement moves them to ELIGIBLE with no other action; a student at 141 credits is NOT_YET; approving a program with 3 eligible students and 1 excluded anchors exactly 3 credentials in one batch; revoke one, it becomes `REVOKED`; another issuer anchoring the same root first does not affect the university's batch (it still ends `CONFIRMED` and verifies); re-running the listener over the same blocks changes nothing.
+**Done when:** e2e on a local Hardhat node: a student with 144 credits and Military Education pending is BLOCKED with that reason, recording the requirement moves them to ELIGIBLE with no other action; a student at 141 credits is NOT_YET; approving a program with 3 eligible students and 1 excluded anchors exactly 3 credentials in one batch; revoke one, it becomes `REVOKED`; another institution anchoring the same root first does not affect the university's batch (it still ends `CONFIRMED` and verifies); a batch anchored directly on-chain with a university signer key but not prepared by the API raises the stolen-key alert, and after `revokeBatch` its credentials verify as REVOKED; re-running the listener over the same blocks changes nothing.
 
 ## Phase 5: Verification, employers, sharing
 

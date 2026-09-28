@@ -28,7 +28,7 @@ These are not preferences. A change that breaks one of them is a bug.
 
 1. **Nothing personal on-chain.** The chain only stores 32-byte hashes, Merkle roots, institution addresses, timestamps and revocation reason codes.
 2. **Tenant isolation.** Every row owned by an institution has `institutionId`. Every read and write is scoped to the caller's institution on the server. Every resource has an e2e test proving institution B cannot read or change institution A's data. (v1 failed this: see `docs/reviews/2026-09-28-v1-review.md`.)
-3. **The server never holds an institution's private key.** Institutions authorize `anchorBatch` and `revoke` with their own wallet (MetaMask), either by sending the transaction or, with gas sponsorship (section 7.7), by signing a message our relayer submits. Our platform admin key only grants/removes the issuer role, and the relayer key only pays gas.
+3. **The server never holds an institution's private key.** Institutions authorize `anchorBatch` and `revoke` with their own wallet (MetaMask), either by sending the transaction or, with gas sponsorship (section 7.7), by signing a message our relayer submits. Our platform admin key registers and suspends institutions, adds and removes their signer wallets, and can revoke a whole batch in an emergency (ADR 0002, 0004, 0005); it must be a multisig before any real deployment. The relayer key only pays gas.
 4. **Verification does not trust our server.** The verify page recomputes the hash in the browser and asks the blockchain directly.
 5. **Issued credential data is immutable.** Once a credential is anchored its payload and salt never change. Corrections = revoke with reason `SUPERSEDED` + issue a new credential.
 6. **Grades are editable until the term is published.** After that, changes need the `GRADE_CHANGE_AFTER_PUBLISH` workflow, and every change is written to an audit log (who, when, old value, new value, reason).
@@ -154,7 +154,7 @@ credentialHash = keccak256( canonicalJson({ v: 1, salt, payload }) )
 
 ### Batch (Merkle tree)
 
-A **Merkle tree** combines many hashes into one hash (the **root**). For any single credential you can produce a short **proof** (a list of ~log2(N) hashes) showing it is inside the root. So one `anchorBatch(root, size)` transaction covers 1 or 10,000 credentials at the same gas cost (~51k gas, measured).
+A **Merkle tree** combines many hashes into one hash (the **root**). For any single credential you can produce a short **proof** (a list of ~log2(N) hashes) showing it is inside the root. So one `anchorBatch(root, size)` transaction covers 1 or 10,000 credentials at the same gas cost (~54k gas, measured).
 
 Leaf format (must match on both sides):
 
@@ -174,7 +174,8 @@ One contract, ~150 lines, no personal data. Source: `packages/contracts/contract
 | `addSigner(institutionId, wallet)` / `removeSigner(wallet)` | Platform admin | Authorize or remove a wallet for that institution (onboarding, staff change, lost or stolen key). A wallet belongs to at most one institution |
 | `suspendInstitution` / `reinstateInstitution` | Platform admin | Withdraw or restore accreditation |
 | `anchorBatch(root, size)` | A signer of an active institution | Store the batch under `(institutionId, root)` with timestamp, size and signing wallet. Reverts on zero root, zero size, or the same institution anchoring the same root twice |
-| `revoke(root, credentialHash, proof, reason)` | Any current signer of the institution that anchored `root` (including batches signed by its former wallets) | Mark one credential revoked. Proof must show the hash is in that batch. Reasons: 1 issued in error, 2 fraud, 3 superseded, 4 other |
+| `revoke(root, credentialHash, proof, reason)` | Any current signer of the institution that anchored `root` (including batches signed by its former wallets) | Mark one credential revoked. Proof must show the hash is in that batch. Reasons: 1 issued in error, 2 fraud, 3 superseded, 4 other, 5 signer compromised |
+| `revokeBatch(institutionId, root, reason)` | Platform admin only, works while paused | Emergency: revoke a whole batch without knowing its leaves, e.g. fake credentials anchored with a stolen signer key (ADR 0004) |
 | `verify(institutionId, root, credentialHash, proof)` | Anyone, even when paused | `institutionId` is always derived from `payload.institution.id`. Returns `{status: UNKNOWN / VALID / REVOKED, institutionActive, anchoredAt, signer, revokedAt, reason}` |
 | `pause()` / `unpause()` | Platform admin | Blocks anchor and revoke only |
 | `anchorBatchBySig(...)` / `revokeBySig(...)` | Anyone (our relayer), carrying the issuer's signature | Same effect as the direct calls, but the issuer only signs and the relayer pays gas. Added in ROADMAP Phase 6, see section 7.7 |
@@ -184,6 +185,8 @@ Design decisions:
 - **An institution has a stable id; wallets are replaceable signers** (ADR 0002). Staff leave, laptops get lost, keys get stolen. Rotating a wallet (`addSigner` new, `removeSigner` old) keeps every old credential VALID with `institutionActive = true`, and the new wallet can still revoke credentials signed by the old one. A removed wallet can do nothing.
 - **Batches are keyed by `(institutionId, root)`** (ADR 0001, 0002). A pending transaction is visible to everyone in the **mempool** (the queue of transactions not yet in a block). If batches were keyed by root only, institution B could copy A's root and anchor it first: A's transaction would fail and the root would belong to B. With the institution in the key, B's copy is a separate, meaningless entry. The verifier derives the institution id from the credential payload, and that payload is part of the hash, so it cannot be swapped.
 - **Revocations are keyed by `(institutionId, root, credentialHash)`**. Institution B putting a copy of A's hash in its own batch and revoking it never touches A's credential. Both attacks have tests.
+- **A stolen signer key is contained** (ADR 0004). The thief can anchor fake batches until the wallet is removed, but cannot revoke genuine credentials: individual revocation needs the hash and proof, which only our database has, and whole-batch revocation is admin-only because every root is public in events. The listener raises an alert for any `BatchAnchored` of our institutions that has no matching batch in our database; the admin removes the signer and calls `revokeBatch` on each fake root.
+- **The platform admin is the root of trust, so it is guarded, not trusted blindly** (ADR 0005). It can add a signer to any institution. Mitigations: a multisig admin before any real deployment, every admin action is a public event, and each institution's listener alerts on any `SignerAdded` / `SignerRemoved` / `BatchRevoked` it did not request. A time delay on `addSigner` is documented as future work.
 - **A suspended institution's old credentials stay VALID**, with `institutionActive = false` so the verify page can show a warning. They were legitimate when issued. A suspended institution can no longer anchor or revoke.
 - **The admin address cannot be zero, and can be handed over** (ADR 0003). The deploy rejects `address(0)`; the admin can grant `DEFAULT_ADMIN_ROLE` to a new address (for example a multisig before any real deployment) and renounce its own. A test proves the handover.
 - **Platform admin cannot revoke institution credentials.** Trust is not centralized in us.
@@ -199,6 +202,8 @@ An **institution is a university**: it is the tenant and the on-chain issuer (Eg
 2. Institution admin links a wallet with SIWE (Sign-In With Ethereum: the wallet signs a message proving it owns the address). Saved as a pending `InstitutionSigner`.
 3. Platform admin reviews and approves. API marks `APPROVED`; admin's browser calls `registerInstitution(institutionId)` then `addSigner(institutionId, wallet)`.
 4. Chain listener sees `InstitutionRegistered` and `SignerAdded` and marks the institution `ISSUER_ACTIVE` and the signer active.
+
+**Stolen key:** remove the signer first, then revoke any batch the listener flagged as unknown with `revokeBatch(..., 5)`, then add a new signer.
 
 **Changing a wallet later** (staff change, lost or stolen key): institution admin links the new wallet with SIWE, platform admin approves, browser calls `addSigner(new)` and `removeSigner(old)` (for a stolen key, remove first). Listener updates `InstitutionSigner` from `SignerAdded` / `SignerRemoved`. Nothing already issued changes.
 
@@ -456,8 +461,9 @@ Every optimization decision (cache, Redis, index, denormalization, moving work t
 
 | Layer | Metric | Budget | Source |
 |---|---|---|---|
-| Chain | `anchorBatch` gas | ≤ 55,000 regardless of batch size (measured: 53,740 for 1 credential, 53,752 for 10,000) | Measured |
-| Chain | `revoke` gas | ≤ 70,000 (measured: 57,938 at 1 credential, 68,476 at 10,000) | Measured |
+| Chain | `anchorBatch` gas | ≤ 55,000 regardless of batch size (measured: 53,762 for 1 credential, 53,774 for 10,000) | Measured |
+| Chain | `revoke` gas | ≤ 70,000 (measured: 57,992 at 1 credential, 68,530 at 10,000) | Measured |
+| Chain | `revokeBatch` gas | Constant (measured: 51,934 at any batch size) | Measured |
 | Chain | `verify` | Free `view` call; proof length log2(N): 14 hashes for 10,000 credentials | Measured |
 | API | Read endpoints | p95 ≤ 200 ms at 100 concurrent users on a 2 vCPU / 4 GB server with seed data | Starting target |
 | API | Write endpoints | p95 ≤ 500 ms (heavy work is queued, not done in the request) | Starting target |
@@ -571,7 +577,8 @@ Full Prisma schema is written in the Phase 2 and 3 plans.
 - Public verify endpoint returns only the credential payload (name, award, dates). Transcripts need a student share link.
 - Chain listener waits for N confirmations (2 on Sepolia) and is idempotent (re-processing the same event changes nothing).
 - Front-running: batches are keyed by `(institutionId, root)`, so another institution anchoring our root first changes nothing for us (ADR 0001, 0002, contract test). A batch goes `FAILED` only if its transaction reverts or is dropped; then it is rebuilt with new salts and retried.
-- Platform admin key: must be handed over to a multisig before any real (non-test) deployment (ADR 0003).
+- Platform admin key: must be handed over to a multisig before any real (non-test) deployment (ADR 0003, 0005).
+- Listener alerts: a `BatchAnchored`, `SignerAdded`, `SignerRemoved` or `BatchRevoked` event for one of our institutions that our database did not initiate raises a high-priority alert to the platform team and the institution admin (ADR 0004, 0005).
 - Relayer key: separate from the platform admin key, holds only a small gas balance, no contract role. Stored as a server secret, rotated if leaked.
 
 ## 13. Glossary
