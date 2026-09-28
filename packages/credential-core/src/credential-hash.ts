@@ -12,11 +12,11 @@ export interface CredentialPayload {
   award: {
     title: string;
     type: "DEGREE" | "DIPLOMA" | "CERTIFICATE" | "TRANSCRIPT";
-    graduationDate: string; // YYYY-MM-DD
+    graduationDate: string;
     gpa?: string; // string, not number: avoids float formatting differences between runtimes
     honors?: string;
   };
-  issuedAt: string; // ISO 8601, UTC
+  issuedAt: string;
 }
 
 /** 32 random bytes. Stored in the DB and printed in the QR, never on-chain. */
@@ -24,10 +24,7 @@ export function generateSalt(): Hex {
   return hexlify(randomBytes(32)) as Hex;
 }
 
-/**
- * credentialHash = keccak256( canonicalJson({ v: 1, salt, payload }) )
- * The salt stops anyone from guessing a hash by trying common names/degrees.
- */
+/** The salt stops anyone from guessing a hash by trying common names/degrees. */
 export function computeCredentialHash(payload: CredentialPayload, salt: Hex): Hex {
   if (!isHexString(salt, 32)) throw new TypeError("salt must be a 32-byte hex string");
   return keccak256(toUtf8Bytes(canonicalJson({ v: 1, salt, payload }))) as Hex;
