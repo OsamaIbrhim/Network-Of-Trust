@@ -1,8 +1,5 @@
-/**
- * Deterministic JSON (RFC 8785 "JCS" subset): object keys sorted by UTF-16 code units,
- * no whitespace. The same data always produces the same string, so the same hash.
- * Only plain objects, arrays, strings, finite numbers, booleans and null are allowed.
- */
+/** RFC 8785 (JCS) subset. Keys use default .sort() (UTF-16 code units), never localeCompare:
+ *  changing the order changes every credential hash. */
 export function canonicalJson(value: unknown): string {
   if (value === null) return "null";
   switch (typeof value) {
