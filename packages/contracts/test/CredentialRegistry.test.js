@@ -277,6 +277,24 @@ describe("CredentialRegistry", function () {
       await registry.connect(signerA).revoke(tree.root, hashes[0], p, Reason.OTHER);
       await expect(registry.connect(signerA).revoke(tree.root, hashes[0], p, Reason.OTHER)).to.be.revertedWithCustomError(registry, "AlreadyRevoked");
     });
+
+    it("stays within the 70,000 gas budget for 1 and 10,000 credentials", async function () {
+      const { registry, signerA } = await loadFixture(deployFixture);
+      const small = buildTree([fakeHash("only-one")]);
+      const big = buildTree(Array.from({ length: 10000 }, (_, i) => fakeHash("c" + i)));
+      await registry.connect(signerA).anchorBatch(small.root, 1);
+      await registry.connect(signerA).anchorBatch(big.root, 10000);
+
+      let deepest = { value: null, proof: [] };
+      for (const [i, v] of big.entries()) {
+        const proof = big.getProof(i);
+        if (proof.length > deepest.proof.length) deepest = { value: v[0], proof };
+      }
+      const g1 = (await (await registry.connect(signerA).revoke(small.root, small.at(0)[0], [], Reason.OTHER)).wait()).gasUsed;
+      const g10000 = (await (await registry.connect(signerA).revoke(big.root, deepest.value, deepest.proof, Reason.OTHER)).wait()).gasUsed;
+      expect(Number(g1)).to.be.lessThan(70000);
+      expect(Number(g10000)).to.be.lessThan(70000);
+    });
   });
 
   describe("wallet rotation", function () {
