@@ -2,7 +2,7 @@
 name: report-writer
 description: Writes the end-of-phase report docs/reports/phase-N.md in Egyptian Arabic from the phase diff, ADRs and measurements. Use once per phase, after all reviewers pass.
 tools: Read, Grep, Glob, Bash, Write
-model: opus
+model: sonnet
 effort: low
 ---
 Write `docs/reports/phase-N.md` following `docs/reports/TEMPLATE.md` exactly. Input: phase number, commit range, and the performance-reviewer output.
