@@ -27,7 +27,7 @@
 
 ### 2.3 عقد `CredentialRegistry`
 - **اتعمل إيه:** تسجيل وتعليق وإرجاع جامعة، إضافة وشيل موقّعين، `anchorBatch(root, size)`، `revoke(...)` لشهادة واحدة بـ proof، `revokeBatch` للـ admin بس، `verify` كـ `view` (قراءة مجانية مش transaction)، و`pause`.
-- **اشتغل إزاي:** الدفعة متخزنة بمفتاح `(institutionId, root)` في storage slot واحد (timestamp وsize وعنوان الموقّع = 32 byte)، فالتكلفة ثابتة. الإلغاء مفتاحه `(institutionId, root, credentialHash)`، فإلغاء في جامعة ميأثرش على جامعة تانية حتى لو نفس الـ root. الأخطاء custom errors (أرخص من رسائل نصية)، ومن ضمنها `InstitutionNotSuspended` اللي اتضاف بعد المراجعة عشان `reinstateInstitution` يرفض جامعة مش متعلقة أصلًا.
+- **اشتغل إزاي:** الدفعة متخزنة بمفتاح `(institutionId, root)` في storage slot واحد (timestamp وsize وعنوان الموقّع = 32 byte)، فالتكلفة ثابتة. الإلغاء مفتاحه `(institutionId, root, credentialHash)`، فإلغاء في جامعة ميأثرش على جامعة تانية حتى لو نفس الـ root. الأخطاء custom errors (أرخص من رسائل نصية)، ومن ضمنها `InstitutionNotSuspended` اللي اتضاف بعد المراجعة عشان `reinstateInstitution` يرفض جامعة مش معلّقة أصلًا.
 - **ليه بالطريقة دي:** كل تفصيلة هنا جت من finding في المراجعة، شوف القسم 4. العقد مش upgradeable (مفيش proxy) حسب قاعدة 14، عشان محدش، ولا حتى إحنا، يقدر يغير قواعد الشهادات اللي اتصدرت.
 - **الملفات المهمة:** `packages/contracts/contracts/CredentialRegistry.sol`، `packages/contracts/test/CredentialRegistry.test.js`، `packages/contracts/test/integration.credential-core.test.js`.
 
@@ -41,9 +41,9 @@
 ## 4. القرارات المهمة
 | القرار | البدائل اللي اتقارنت | ليه اخترنا ده | التمن اللي دفعناه (trade-off) | ADR |
 |---|---|---|---|---|
-| مفتاح الدفعة `(issuer, root)` مش `root` بس | root عالمي فريد | مع root عالمي، أي حد يشوف الـ tx في الـ mempool (طابور المعاملات قبل ما تدخل block) يقدر يعمل front-running (يسبقك بنفس الـ root) ويحجزه أو يخطفه | `verify` لازم ياخد الجامعة كمان | `docs/decisions/0001-batch-key-issuer-root.md` |
+| مفتاح الدفعة `(جامعة, root)` مش `root` بس (ADR 0001 كان `(issuer, root)` وADR 0002 غيّره لـ `(institutionId, root)`) | root عالمي فريد | مع root عالمي، أي حد يشوف الـ tx في الـ mempool (طابور المعاملات قبل ما تدخل block) يقدر يعمل front-running (يسبقك بنفس الـ root) ويحجزه أو يخطفه | `verify` لازم ياخد الجامعة كمان | `docs/decisions/0001-batch-key-issuer-root.md` |
 | الجامعة ليها `institutionId` ثابت والمحافظ موقّعين يتغيروا | الجامعة = عنوان محفظة | لو المحفظة اتسرقت أو اتغيرت، الشهادات القديمة تفضل VALID والمحفظة الجديدة تقدر تلغي دفعات القديمة | طبقة mapping زيادة من الموقّع للجامعة | `docs/decisions/0002-institution-id-and-rotatable-signers.md` |
-| عنوان الـ admin بيتمرر صريح في الـ constructor | الـ admin = الـ deployer تلقائيًا | يسمح إنه يبقى multisig (محفظة محتاجة توقيع أكتر من شخص) من الأول، ويمنع إن مفتاح النشر يفضل مسيطر | خطوة زيادة وقت النشر | `docs/decisions/0003-admin-address.md` |
+| الـ constructor بيرفض `address(0)` كـ admin، والـ admin ينفع يتنقل لعنوان تاني (multisig) | نسيبه زي ما هو، أو `AccessControlDefaultAdminRules` (نقل على خطوتين بفترة انتظار) | من غير الرفض ممكن العقد يتنشر من غير admin خالص ومحدش يعتمد جامعات عليه. والنقل لـ multisig (محفظة محتاجة توقيع أكتر من شخص) ممكن من غير تعديل العقد واتعمله test | الحماية الحقيقية (multisig) لسه لازم تتعمل قبل أي نشر حقيقي | `docs/decisions/0003-admin-address.md` |
 | `revokeBatch` للـ admin بس | نسمح للموقّعين كمان | مفتاح موقّع مسروق كان هيقدر يلغي كل دفعات الجامعة (كل الـ roots علنية). الـ admin بيلغي دفعة مزيفة كاملة من غير ما يعرف أوراقها | الجامعة محتاجة الـ admin عشان تلغي دفعة كاملة | `docs/decisions/0004-stolen-signer-key-revoke-batch.md` |
 | الـ admin هو أساس الثقة، وبنحرسه (multisig، events، مراقبة) | admin بصلاحيات أقل، أو من غير admin | من غير admin مفيش طريقة نصلّح مفتاح مسروق؛ الحل نراقبه مش نشيله | لازم multisig قبل أي نشر حقيقي | `docs/decisions/0005-platform-admin-trust.md` |
 | Merkle batch بدل tx لكل شهادة | tx لكل طالب | التكلفة ثابتة (حوالي 53.76k gas) مهما كان العدد | الـ revoke محتاج proof وتكلفته بتزيد مع log2(N) | ARCHITECTURE 10.2 |
